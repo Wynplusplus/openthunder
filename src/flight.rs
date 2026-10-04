@@ -194,14 +194,16 @@ fn engine_power_factor(altitude: f32, spec: &AircraftSpec) -> f32 {
 
 /// Control authority factor. It grows with airspeed (mushy controls when slow)
 /// and then stiffens at high indicated airspeed / Mach, like the real
-/// compressibility that makes the controls lock up in a dive.
+/// compressibility that makes the controls lock up in a dive. Near the limit the
+/// surfaces are almost useless — the classic "nothing works, ride it down".
 fn control_authority(ias: f32, mach: f32, spec: &AircraftSpec) -> f32 {
     let base = (ias / spec.control_ref_speed).clamp(0.0, 1.0);
     let ias_stiffen = ((ias - spec.stiffening_onset_ias)
         / (spec.max_ias - spec.stiffening_onset_ias).max(1.0))
     .clamp(0.0, 1.0);
-    let mach_stiffen = ((mach - 0.5) / (spec.stiffening_mach - 0.5).max(0.01)).clamp(0.0, 1.0);
-    base * (1.0 - 0.7 * ias_stiffen.max(mach_stiffen))
+    let mach_stiffen = ((mach - 0.45) / (spec.stiffening_mach - 0.45).max(0.01)).clamp(0.0, 1.0);
+    // Up to an 85% loss: the controls do not merely get heavy, they lock.
+    base * (1.0 - 0.85 * ias_stiffen.max(mach_stiffen))
 }
 
 /// Reads keyboard + mouse and writes the pilot's control inputs.
@@ -497,9 +499,11 @@ fn flight_dynamics(
     let aspect_ratio = spec.wing_span * spec.wing_span / spec.wing_area;
     let cl = lift_coefficient(alpha, &spec) + spec.cl_flap * flap;
     let induced_drag = cl * cl / (PI * spec.oswald * aspect_ratio);
-    // Transonic drag rise near the Mach limit.
-    let mach_drag = if mach > 0.6 {
-        (mach - 0.6).powi(2) * 25.0
+    // Transonic drag rise near the Mach limit. Kept gentle enough that a dive
+    // can reach the high-Mach regime (where the controls stiffen) before the
+    // wall stops it.
+    let mach_drag = if mach > 0.55 {
+        (mach - 0.55).powi(2) * 6.0
     } else {
         0.0
     };
@@ -884,16 +888,13 @@ mod tests {
         );
     }
 
-    /// A hard pull in normal flight should load the wing past the pilot's ~6.5 g
-    /// tolerance, so blackout is actually reachable in a fight.
-    #[test]
-    fn a_hard_pull_exceeds_the_pilot_g_tolerance() {
+    /// Peak g reached by a full pull at `speed` (m/s) over `steps` 20 ms steps.
+    fn peak_g_at(speed: f32, steps: usize) -> f32 {
         let mut app = App::new();
         app.insert_resource(Time::<()>::default());
         app.add_systems(Update, flight_dynamics);
-
         let mut aircraft = Aircraft::new(corsair());
-        aircraft.velocity = Vec3::NEG_Z * 200.0;
+        aircraft.velocity = Vec3::NEG_Z * speed;
         aircraft.controls.pitch = 1.0;
         let entity = app
             .world_mut()
@@ -904,18 +905,69 @@ mod tests {
                 PlayerControlled,
             ))
             .id();
-
-        let mut peak: f32 = 0.0;
-        for _ in 0..200 {
+        let mut peak = 0.0f32;
+        for _ in 0..steps {
             app.world_mut()
                 .resource_mut::<Time>()
                 .advance_by(std::time::Duration::from_secs_f32(0.02));
             app.update();
             peak = peak.max(app.world().get::<Aircraft>(entity).unwrap().g_load);
         }
+        peak
+    }
+
+    /// A hard pull at combat speed should load the wing past the pilot's ~6.5 g
+    /// tolerance, so blackout is actually reachable in a fight.
+    #[test]
+    fn a_hard_pull_exceeds_the_pilot_g_tolerance() {
+        let peak = peak_g_at(160.0, 200);
         assert!(
             peak > crate::pilot::CrewSkills::default().g_tolerance,
             "hard pull only reached {peak:.1} g"
+        );
+    }
+
+    /// A dive should build enough speed for the controls to stiffen — the
+    /// classic "ride it down" of Air RB.
+    #[test]
+    fn a_dive_stiffens_the_controls() {
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.add_systems(Update, flight_dynamics);
+        let mut aircraft = Aircraft::new(corsair());
+        aircraft.velocity = Vec3::NEG_Z * 150.0;
+        aircraft.throttle = 1.0;
+        aircraft.controls.pitch = -0.5;
+        let entity = app
+            .world_mut()
+            .spawn((
+                Transform::from_translation(Vec3::new(0.0, 8000.0, 0.0)),
+                aircraft,
+                DamageModel::new(100.0),
+                PlayerControlled,
+            ))
+            .id();
+        let mut min_authority = 1.0f32;
+        for _ in 0..600 {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_secs_f32(0.05));
+            app.update();
+            let ac = app.world().get::<Aircraft>(entity).unwrap();
+            let alt = app
+                .world()
+                .get::<Transform>(entity)
+                .unwrap()
+                .translation
+                .y
+                .max(0.0);
+            let temp = (288.15 - 0.0065 * alt).max(216.65);
+            let mach = ac.airspeed / (1.4 * 287.05 * temp).sqrt();
+            min_authority = min_authority.min(control_authority(ac.ias, mach, &ac.spec));
+        }
+        assert!(
+            min_authority < 0.6,
+            "a dive should stiffen the controls; minimum authority was {min_authority:.2}"
         );
     }
 }
