@@ -91,9 +91,10 @@ fn setup_combat_assets(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     commands.insert_resource(CombatAssets {
-        mesh: meshes.add(Cuboid::new(0.10, 0.10, 1.6)),
+        // A long, bright tracer so you can clearly see where the rounds fly.
+        mesh: meshes.add(Cuboid::new(0.4, 0.4, 6.0)),
         material: materials.add(StandardMaterial {
-            base_color: Color::srgb(1.0, 0.82, 0.25),
+            base_color: Color::srgb(1.0, 0.9, 0.45),
             unlit: true,
             ..default()
         }),
