@@ -3,9 +3,9 @@
 use bevy::prelude::*;
 
 use openthunder::keybinds::{
-    DAMAGE_ENGINE, DAMAGE_LEFT_WING, DAMAGE_TAIL, FLAPS_DOWN, FLAPS_UP, PITCH_DOWN, PITCH_DOWN_ALT,
-    PITCH_UP, PITCH_UP_ALT, REPAIR, RESET, ROLL_LEFT, ROLL_RIGHT, THROTTLE_DOWN, THROTTLE_UP, WEP,
-    YAW_LEFT, YAW_RIGHT, key_display,
+    DAMAGE_ENGINE, DAMAGE_LEFT_WING, DAMAGE_TAIL, FLAPS_DOWN, FLAPS_UP, FREE_LOOK, PITCH_DOWN,
+    PITCH_DOWN_ALT, PITCH_UP, PITCH_UP_ALT, REPAIR, RESET, ROLL_LEFT, ROLL_RIGHT, THROTTLE_DOWN,
+    THROTTLE_UP, WEP, YAW_LEFT, YAW_RIGHT, key_display,
 };
 
 use crate::aircraft::{Aircraft, PlayerControlled};
@@ -91,7 +91,7 @@ fn update_hud(
          \n\
          Mouse: aim   {pitch_up}/{pitch_down}/{pitch_up_alt}/{pitch_down_alt}: pitch   {roll_left}/{roll_right}: roll   {yaw_left}/{yaw_right}: rudder\n\
          {throttle_up}/{throttle_down}: throttle   {wep_key}: WEP   {flaps_down}/{flaps_up}: flaps   {reset}: respawn\n\
-         {dmg_wing}/{dmg_engine}/{dmg_tail}: damage   {repair}: repair   Esc: menu",
+         {dmg_wing}/{dmg_engine}/{dmg_tail}: damage   {repair}: repair   {free_look}: free look   Esc: menu",
         name = aircraft.spec.name,
         connection = connection,
         speed = speed_kmh,
@@ -124,5 +124,6 @@ fn update_hud(
         dmg_engine = key_display(bindings.name(DAMAGE_ENGINE)),
         dmg_tail = key_display(bindings.name(DAMAGE_TAIL)),
         repair = key_display(bindings.name(REPAIR)),
+        free_look = key_display(bindings.name(FREE_LOOK)),
     );
 }

@@ -105,6 +105,7 @@ Defaults — all of these can be changed in the launcher:
 | `R`              | Respawn in the air                       |
 | `1` / `2` / `3`  | Apply test damage: left wing / engine / tail |
 | `0`              | Repair everything                        |
+| `C`              | Free look (hold to orbit the camera)     |
 | `Esc`            | In-game menu (Resume / Quit to Desktop)  |
 
 Move the mouse once to "engage" mouse aim. From then on the aircraft points
@@ -116,6 +117,10 @@ available as manual overrides, and `A`/`D` always give full roll authority.
 Press **`Esc`** at any time for the in-game menu (Resume / Quit to Desktop). The
 world **keeps flying** while it is open — the simulation is never paused; the
 aircraft just continues with neutral controls. Use `Up`/`Down` and `Enter`.
+
+**Hold `C`** to free-look: the mouse then orbits the camera around the aircraft
+(War Thunder style) while the aircraft keeps flying. Release to ease back behind
+the nose. The mouse does not steer the aircraft while free-looking.
 
 ### Instructor (mouse aim)
 

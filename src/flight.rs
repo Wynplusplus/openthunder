@@ -30,7 +30,7 @@ use openthunder::keybinds::{
 use crate::aircraft::{
     Aircraft, AircraftSpec, Controls, FlapSetting, PlayerControlled, START_POSITION,
 };
-use crate::camera::ChaseCamera;
+use crate::camera::{ChaseCamera, FreeLook};
 use crate::damage::{AircraftPart, DamageModel};
 use crate::menu::GameMenu;
 
@@ -214,6 +214,7 @@ fn read_player_input(
     mouse_motion: Res<AccumulatedMouseMotion>,
     mut mouse_aim: ResMut<MouseAim>,
     menu: Res<GameMenu>,
+    free_look: Res<FreeLook>,
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<ChaseCamera>>,
     mut query: Query<(&Transform, &mut Aircraft), With<PlayerControlled>>,
@@ -234,7 +235,8 @@ fn read_player_input(
 
     // Don't act on the mouse until the player actually moves it, so the aircraft
     // doesn't lurch toward wherever the OS cursor happens to be at launch.
-    if !mouse_aim.engaged && mouse_motion.delta != Vec2::ZERO {
+    // While free-looking the mouse drives the camera, not the aircraft.
+    if !free_look.active && !mouse_aim.engaged && mouse_motion.delta != Vec2::ZERO {
         mouse_aim.engaged = true;
     }
 
@@ -291,7 +293,7 @@ fn read_player_input(
     let mut aim_pitch = 0.0;
     let mut aim_roll = 0.0;
     let mut aim_yaw = 0.0;
-    if mouse_aim.engaged {
+    if mouse_aim.engaged && !free_look.active {
         if let (Ok(window), Ok((camera, camera_transform))) = (windows.single(), cameras.single()) {
             if let Some(cursor) = window.cursor_position() {
                 if let Ok(ray) = camera.viewport_to_world(camera_transform, cursor) {
@@ -588,6 +590,7 @@ mod tests {
             .init_resource::<AccumulatedMouseMotion>()
             .init_resource::<MouseAim>()
             .init_resource::<crate::menu::GameMenu>()
+            .init_resource::<crate::camera::FreeLook>()
             .insert_resource(Bindings::from_config(&Keybinds::default()))
             .add_systems(Update, read_player_input);
 

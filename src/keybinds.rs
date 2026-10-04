@@ -115,6 +115,11 @@ pub const ACTIONS: &[ActionInfo] = &[
         // Not Shift: that is the default for "pitch down (alt)".
         default_key: "B",
     },
+    ActionInfo {
+        name: "free_look",
+        label: "Free look",
+        default_key: "C",
+    },
 ];
 
 // Stable indices into [`ACTIONS`] / [`Keybinds::keys`], used by the game.
@@ -136,6 +141,7 @@ pub const REPAIR: usize = 14;
 pub const FLAPS_DOWN: usize = 15;
 pub const FLAPS_UP: usize = 16;
 pub const WEP: usize = 17;
+pub const FREE_LOOK: usize = 18;
 
 /// Canonical names of every key that can be bound.
 pub const SUPPORTED_KEYS: &[&str] = &[

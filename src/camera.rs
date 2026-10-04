@@ -1,24 +1,54 @@
 //! Third-person chase camera, War Thunder style: it lags behind and above the
 //! aircraft and partially rolls with it.
 //!
-//! The camera always looks exactly along the aircraft's nose (its *forward*
+//! The camera normally looks exactly along the aircraft's nose (its *forward*
 //! direction). That is what makes pointer aiming work: the screen centre maps to
 //! the nose direction, so the aircraft can be steered by pointing the cursor.
+//!
+//! **Free look** (hold the `free_look` key, default `C`) orbits the camera
+//! around the aircraft with the mouse while the aircraft keeps flying. Release
+//! and the camera eases back behind the nose.
 
+use std::f32::consts::PI;
+
+use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
+use openthunder::keybinds::FREE_LOOK;
 
-use crate::aircraft::{Aircraft, PlayerControlled};
+use crate::aircraft::PlayerControlled;
+use crate::flight::Bindings;
+
+/// Radians of look per pixel of mouse movement.
+const LOOK_SENSITIVITY: f32 = 0.004;
+/// Maximum look pitch (radians).
+const MAX_PITCH: f32 = 1.3;
 
 /// Marks the camera that follows the player's aircraft.
 #[derive(Component)]
 pub struct ChaseCamera;
 
+/// Free-look state: `active` while the key is held, plus the current orbit.
+#[derive(Resource, Default)]
+pub struct FreeLook {
+    pub active: bool,
+    pub yaw: f32,
+    pub pitch: f32,
+}
+
+impl FreeLook {
+    /// Orbit rotation in the aircraft's frame.
+    pub fn rotation(&self) -> Quat {
+        Quat::from_rotation_y(self.yaw) * Quat::from_rotation_x(self.pitch)
+    }
+}
+
 pub struct ChaseCameraPlugin;
 
 impl Plugin for ChaseCameraPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_camera)
-            .add_systems(Update, chase_camera);
+        app.init_resource::<FreeLook>()
+            .add_systems(Startup, spawn_camera)
+            .add_systems(Update, (free_look_input, chase_camera));
     }
 }
 
@@ -39,8 +69,38 @@ fn spawn_camera(mut commands: Commands) {
     ));
 }
 
+/// Hold the free-look key and move the mouse to orbit the camera.
+fn free_look_input(
+    time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
+    bindings: Res<Bindings>,
+    mouse_motion: Res<AccumulatedMouseMotion>,
+    mut look: ResMut<FreeLook>,
+) {
+    look.active = bindings.pressed(&keys, FREE_LOOK);
+
+    if look.active {
+        let delta = mouse_motion.delta;
+        // Mouse right -> look right, mouse up -> look up.
+        look.yaw = (look.yaw - delta.x * LOOK_SENSITIVITY).clamp(-PI, PI);
+        look.pitch = (look.pitch - delta.y * LOOK_SENSITIVITY).clamp(-MAX_PITCH, MAX_PITCH);
+    } else {
+        // Ease back behind the aircraft.
+        let blend = (1.0 - (-12.0 * time.delta_secs()).exp()).clamp(0.0, 1.0);
+        look.yaw -= look.yaw * blend;
+        look.pitch -= look.pitch * blend;
+        if look.yaw.abs() < 1e-3 {
+            look.yaw = 0.0;
+        }
+        if look.pitch.abs() < 1e-3 {
+            look.pitch = 0.0;
+        }
+    }
+}
+
 fn chase_camera(
     time: Res<Time>,
+    look: Res<FreeLook>,
     target: Query<&Transform, (With<PlayerControlled>, Without<ChaseCamera>)>,
     mut camera: Query<&mut Transform, With<ChaseCamera>>,
 ) {
@@ -53,22 +113,24 @@ fn chase_camera(
 
     let dt = time.delta_secs();
 
+    // The camera rig (position offset + look direction) is the aircraft's frame
+    // rotated by the free-look orbit, so the aircraft stays put on screen.
+    let rig = aircraft.rotation * look.rotation();
+
     // Desired position: behind (+Z is behind, since the nose is -Z) and above.
-    let desired = aircraft.translation + aircraft.rotation * Vec3::new(0.0, 3.0, 18.0);
+    let desired = aircraft.translation + rig * Vec3::new(0.0, 3.0, 18.0);
     let follow = 1.0 - (-6.0 * dt).exp();
     camera_transform.translation = camera_transform
         .translation
         .lerp(desired, follow.clamp(0.0, 1.0));
 
-    // Look exactly along the nose. `looking_to` (rather than `looking_at`)
-    // guarantees the camera's forward equals the aircraft's forward, so the
-    // screen centre corresponds to where the nose points.
-    let forward = Aircraft::forward(aircraft.rotation);
+    // Look along the (free-look rotated) nose. `looking_to` guarantees the
+    // camera's forward is exactly this direction.
+    let forward = rig * Vec3::NEG_Z;
 
     // Partially inherit the aircraft's roll for a dynamic feel. Weighting world
-    // up avoids a degenerate up-vector when inverted. (Roll does not change the
-    // forward direction, so this does not affect aiming.)
-    let up = aircraft.rotation * Vec3::Y;
+    // up avoids a degenerate up-vector when inverted.
+    let up = rig * Vec3::Y;
     let camera_up = (up + Vec3::Y * 2.0).normalize_or_zero();
     let camera_up = if camera_up.length_squared() < 0.5 {
         Vec3::Y
@@ -78,4 +140,88 @@ fn chase_camera(
 
     *camera_transform =
         Transform::from_translation(camera_transform.translation).looking_to(forward, camera_up);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn look_rotation_is_identity_at_rest() {
+        let look = FreeLook::default();
+        let rotated = look.rotation() * Vec3::NEG_Z;
+        assert!((rotated - Vec3::NEG_Z).length() < 1e-6);
+    }
+
+    #[test]
+    fn positive_yaw_looks_right() {
+        // Mouse right accumulates negative yaw (see `free_look_input`), so a
+        // negative yaw should swing the view toward the aircraft's right (+X).
+        let look = FreeLook {
+            yaw: -0.5,
+            ..default()
+        };
+        let forward = look.rotation() * Vec3::NEG_Z;
+        assert!(forward.x > 0.0, "expected to look right, got {forward:?}");
+    }
+
+    #[test]
+    fn positive_pitch_looks_up() {
+        let look = FreeLook {
+            pitch: 0.5,
+            ..default()
+        };
+        let forward = look.rotation() * Vec3::NEG_Z;
+        assert!(forward.y > 0.0, "expected to look up, got {forward:?}");
+    }
+
+    #[test]
+    fn free_look_key_and_mouse_orbit_then_return() {
+        use openthunder::keybinds::Keybinds;
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<AccumulatedMouseMotion>()
+            .init_resource::<FreeLook>()
+            .insert_resource(Bindings::from_config(&Keybinds::default()))
+            .add_systems(Update, free_look_input);
+
+        // Hold C and move the mouse right: look right (negative yaw).
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyC);
+        app.world_mut()
+            .resource_mut::<AccumulatedMouseMotion>()
+            .delta = Vec2::new(100.0, 0.0);
+        app.update();
+        {
+            let look = app.world().resource::<FreeLook>();
+            assert!(look.active, "free look should be active while C is held");
+            assert!(
+                look.yaw < 0.0,
+                "mouse right should look right, got {}",
+                look.yaw
+            );
+        }
+
+        // Release C: the orbit eases back toward centre.
+        let before = app.world().resource::<FreeLook>().yaw.abs();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::KeyC);
+        app.world_mut()
+            .resource_mut::<AccumulatedMouseMotion>()
+            .delta = Vec2::ZERO;
+        for _ in 0..60 {
+            app.update();
+        }
+        let look = app.world().resource::<FreeLook>();
+        assert!(!look.active);
+        assert!(
+            look.yaw.abs() < before,
+            "orbit should ease back, was {before}, now {}",
+            look.yaw.abs()
+        );
+    }
 }
