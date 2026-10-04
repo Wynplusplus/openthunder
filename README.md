@@ -218,6 +218,8 @@ Implemented in `src/combat.rs`.
   reads.
 - A destroyed fuselage finishes the aircraft: no thrust, no control, heavy drag.
 - The HUD shows remaining ammo, the armament and hit markers.
+- A fixed gun **crosshair** marks the centre of the screen — the chase camera
+  looks along the nose, so that *is* where the rounds go.
 
 ## Damage model
 
@@ -271,6 +273,7 @@ src/
   hud.rs             telemetry overlay
   menu.rs            in-game menu (Esc); the world keeps running while open
   spawn_menu.rs      pre-spawn plane selection screen
+  crosshair.rs       fixed gun crosshair at screen centre
 ```
 
 ## Known simplifications

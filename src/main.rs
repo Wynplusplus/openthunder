@@ -8,6 +8,7 @@
 mod aircraft;
 mod camera;
 mod combat;
+mod crosshair;
 mod damage;
 mod flight;
 mod hud;
@@ -58,6 +59,7 @@ fn main() {
             net::NetPlugin,
             combat::CombatPlugin,
             spawn_menu::SpawnMenuPlugin,
+            crosshair::CrosshairPlugin,
         ))
         .run();
 }
