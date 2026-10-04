@@ -18,6 +18,7 @@ mod net;
 mod pilot;
 mod spawn_menu;
 mod spotting;
+mod targets;
 mod world;
 
 use bevy::prelude::*;
@@ -66,6 +67,7 @@ fn main() {
             pilot::PilotPlugin,
             match_client::MatchClientPlugin,
             spotting::SpottingPlugin,
+            targets::TargetsPlugin,
         ))
         .run();
 }

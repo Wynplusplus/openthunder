@@ -20,7 +20,7 @@ impl Plugin for WorldPlugin {
 
 /// Which terrain is currently built.
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Default)]
-enum WorldKind {
+pub(crate) enum WorldKind {
     #[default]
     Training,
     Islands,
@@ -33,6 +33,14 @@ impl WorldKind {
             WorldKind::Islands
         } else {
             WorldKind::Training
+        }
+    }
+
+    /// Height of the main landmass, where ground targets sit.
+    pub(crate) fn ground_level(self) -> f32 {
+        match self {
+            WorldKind::Training => 0.0,
+            WorldKind::Islands => 150.0,
         }
     }
 }

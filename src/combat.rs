@@ -179,6 +179,8 @@ fn update_projectiles(
             &mut DamageModel,
             Option<&PlayerControlled>,
             Option<&RemotePlayer>,
+            Option<&crate::targets::TestTarget>,
+            Option<&crate::targets::HitBox>,
         ),
         Without<Projectile>,
     >,
@@ -210,28 +212,36 @@ fn update_projectiles(
             continue;
         }
 
-        // Swept hit test against every aircraft (skip the shooter).
-        for (target, target_transform, mut damage, player, remote) in &mut targets {
+        // Swept hit test against every aircraft and target (skip the shooter).
+        for (target, target_transform, mut damage, player, remote, test_target, hit_box) in
+            &mut targets
+        {
             if target == owner {
                 continue;
             }
-            let Some(t) = segment_hits_box(target_transform, p0, p1, HIT_HALF_EXTENTS) else {
+            let half = hit_box.map_or(HIT_HALF_EXTENTS, |hit_box| hit_box.0);
+            let Some(t) = segment_hits_box(target_transform, p0, p1, half) else {
                 continue;
             };
             let point = p0.lerp(p1, t);
-            let section = classify_hit(target_transform, point);
-            // Tell the server about hits on other players so everyone agrees
-            // (the server relays it to the others; we apply it locally now).
-            if let Some(remote) = remote {
-                if let Some(outgoing) = &client.outgoing {
-                    let _ = outgoing.send(ClientMessage::Hit {
-                        target: remote.id,
-                        section: section.index() as u8,
-                        damage: damage_amount,
-                    });
+            if test_target.is_some() {
+                // Ground targets have a single structure pool.
+                damage.apply_damage(AircraftPart::Fuselage, damage_amount);
+            } else {
+                let section = classify_hit(target_transform, point);
+                // Tell the server about hits on other players so everyone agrees
+                // (the server relays it to the others; we apply it locally now).
+                if let Some(remote) = remote {
+                    if let Some(outgoing) = &client.outgoing {
+                        let _ = outgoing.send(ClientMessage::Hit {
+                            target: remote.id,
+                            section: section.index() as u8,
+                            damage: damage_amount,
+                        });
+                    }
                 }
+                damage.apply_damage(section, damage_amount);
             }
-            damage.apply_damage(section, damage_amount);
             if player.is_some() {
                 feedback.player_hit = 0.6;
             } else {
@@ -364,5 +374,53 @@ mod tests {
             saw_positive |= value > 0.0;
         }
         assert!(saw_negative && saw_positive);
+    }
+
+    /// A projectile aimed at a test target should damage it through the target's
+    /// own (small) hit box, not the aircraft-sized default.
+    #[test]
+    fn projectiles_damage_test_targets() {
+        use crate::net::NetClient;
+        use crate::targets::{HitBox, TestTarget};
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default())
+            .init_resource::<CombatFeedback>()
+            .insert_resource(NetClient::default())
+            .add_systems(Update, update_projectiles);
+
+        let target = app
+            .world_mut()
+            .spawn((
+                Transform::from_translation(Vec3::new(0.0, 50.0, -100.0)),
+                DamageModel::new(10.0),
+                TestTarget {
+                    alive: true,
+                    respawn_in: 0.0,
+                },
+                HitBox(Vec3::new(1.0, 1.0, 1.0)),
+            ))
+            .id();
+        let shooter = app.world_mut().spawn(()).id();
+        app.world_mut().spawn((
+            Transform::from_translation(Vec3::new(0.0, 50.0, -95.0)),
+            Projectile {
+                velocity: Vec3::new(0.0, 0.0, -800.0),
+                damage: 5.0,
+                owner: shooter,
+                life: 1.0,
+            },
+        ));
+
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs_f32(0.05));
+        app.update();
+
+        let damage = app.world().get::<DamageModel>(target).unwrap();
+        assert!(
+            damage.integrity(AircraftPart::Fuselage) < 1.0,
+            "the target should take damage"
+        );
     }
 }

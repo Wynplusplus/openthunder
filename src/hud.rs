@@ -94,6 +94,7 @@ fn update_hud(
     crew: Res<CrewSkills>,
     feedback: Res<CombatFeedback>,
     match_state: Res<crate::match_client::MatchClient>,
+    target_score: Res<crate::targets::TargetScore>,
     aircraft: Query<(&Aircraft, &Transform, &DamageModel), With<PlayerControlled>>,
     mut hud: Query<&mut Text, (With<HudText>, Without<MatchText>, Without<KillFeedText>)>,
     mut match_text: Query<&mut Text, (With<MatchText>, Without<KillFeedText>)>,
@@ -201,12 +202,22 @@ fn update_hud(
         "clear".to_string()
     };
 
+    let targets = if target_score.total > 0 {
+        format!(
+            "Targets {}/{} destroyed",
+            target_score.destroyed, target_score.total
+        )
+    } else {
+        String::new()
+    };
+
     **text = format!(
         "{name}   {connection}\n\
          TAS {speed:5.0} km/h   IAS {ias:5.0} km/h   Alt {alt:6.0} m\n\
          Throttle {thr:3.0}% {wep}   AoA {alpha:+5.1} deg   G {g:+.1}   Stamina {stamina:3.0}%   Pilot {pilot} (tol {tol:.1}g)\n\
          Flaps {flaps}   Wing {wing:3.0}%   Engine {eng:3.0}%   Tail {tail:3.0}%   {status}\n\
          Ammo {ammo}   {guns}{hit_marker}\n\
+         {targets}\n\
          \n\
          Mouse: aim   {fire_key}: fire   {pitch_up}/{pitch_down}/{pitch_up_alt}/{pitch_down_alt}: pitch   {roll_left}/{roll_right}: roll   {yaw_left}/{yaw_right}: rudder\n\
          {throttle_up}/{throttle_down}: throttle   {wep_key}: WEP   {flaps_down}/{flaps_up}: flaps   {reset}: respawn\n\
@@ -216,6 +227,7 @@ fn update_hud(
         ammo = ammo,
         guns = guns,
         hit_marker = hit_marker,
+        targets = targets,
         fire_key = key_display(bindings.name(FIRE)),
         speed = speed_kmh,
         ias = ias_kmh,

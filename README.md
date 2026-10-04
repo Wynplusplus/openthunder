@@ -284,6 +284,18 @@ Implemented in `src/combat.rs`.
 - A fixed gun **crosshair** marks the centre of the screen — the chase camera
   looks along the nose, so that *is* where the rounds go.
 
+### Test targets
+
+In **free flight** (single-player or a `free_flight` server) a column of
+shootable ground targets is placed near the runway, War Thunder test-flight
+style: six tanks and three fat fuel tanks. Each has its own hit box and health,
+blows up in a little fireball when destroyed, and **respawns after 20 s** so you
+can keep practising. The HUD shows `Targets N/9 destroyed`. In team modes the
+targets are cleared away.
+
+Implemented in `src/targets.rs`; the hit detection in `combat.rs` uses each
+target's own `HitBox` instead of the aircraft-sized default.
+
 ## Damage model
 
 Implemented in `src/damage.rs`. Every aircraft owns a `DamageModel` with one
@@ -340,6 +352,7 @@ src/
   pilot.rs           crew g-tolerance, blackout/redout, tunnel-vision overlay
   match_client.rs    team deathmatch state: scoreboard, kill feed, respawn
   spotting.rs        Air RB-style spotting: render culling + aircraft markers
+  targets.rs         free-flight test targets (shootable, respawning)
 ```
 
 ## Known simplifications
