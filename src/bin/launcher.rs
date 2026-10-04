@@ -10,7 +10,7 @@
 use std::io::{self, Write};
 use std::process::Command;
 
-use openthunder::keybinds::{self, ACTIONS, Keybinds, SUPPORTED_KEYS};
+use openthunder::keybinds::{self, ACTIONS, Keybinds, SUPPORTED_KEYS, key_display};
 use openthunder::planes;
 use openthunder::settings::Settings;
 
@@ -274,7 +274,7 @@ fn keybind_lines(
         String::new(),
     ];
     for (index, action) in ACTIONS.iter().enumerate() {
-        let key = keybinds.get(index);
+        let key = key_display(keybinds.get(index));
         let label = format!("{:<22}", action.label);
         if index == selected {
             if capturing {

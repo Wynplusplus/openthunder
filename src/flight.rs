@@ -23,8 +23,8 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use openthunder::keybinds::{
-    FLAPS_DOWN, FLAPS_UP, Keybinds, PITCH_DOWN, PITCH_UP, RESET, ROLL_LEFT, ROLL_RIGHT,
-    THROTTLE_DOWN, THROTTLE_UP, WEP, YAW_LEFT, YAW_RIGHT,
+    FLAPS_DOWN, FLAPS_UP, Keybinds, PITCH_DOWN, PITCH_DOWN_ALT, PITCH_UP, PITCH_UP_ALT, RESET,
+    ROLL_LEFT, ROLL_RIGHT, THROTTLE_DOWN, THROTTLE_UP, WEP, YAW_LEFT, YAW_RIGHT,
 };
 
 use crate::aircraft::{
@@ -258,10 +258,10 @@ fn read_player_input(
     let mut keyboard_pitch = 0.0;
     let mut keyboard_roll: f32 = 0.0;
     let mut keyboard_yaw = 0.0;
-    if bindings.pressed(&keys, PITCH_UP) {
+    if bindings.pressed(&keys, PITCH_UP) || bindings.pressed(&keys, PITCH_UP_ALT) {
         keyboard_pitch += 1.0;
     }
-    if bindings.pressed(&keys, PITCH_DOWN) {
+    if bindings.pressed(&keys, PITCH_DOWN) || bindings.pressed(&keys, PITCH_DOWN_ALT) {
         keyboard_pitch -= 1.0;
     }
     if bindings.pressed(&keys, ROLL_LEFT) {
@@ -715,5 +715,19 @@ mod tests {
         assert!(spec.cl_flap > 0.0 && spec.cd_flap > 0.0);
         assert!(spec.flap_speed_limits[0] > spec.flap_speed_limits[1]);
         assert!(spec.flap_speed_limits[1] > spec.flap_speed_limits[2]);
+    }
+
+    #[test]
+    fn alt_pitch_keys_control_pitch() {
+        let pitch_of =
+            |app: &App, entity: Entity| app.world().get::<Aircraft>(entity).unwrap().controls.pitch;
+
+        let (mut app, entity) = input_app(0.0);
+        press_and_update(&mut app, KeyCode::ControlLeft);
+        assert!(pitch_of(&app, entity) > 0.0, "Ctrl should pitch up");
+
+        let (mut app, entity) = input_app(0.0);
+        press_and_update(&mut app, KeyCode::ShiftLeft);
+        assert!(pitch_of(&app, entity) < 0.0, "Shift should pitch down");
     }
 }

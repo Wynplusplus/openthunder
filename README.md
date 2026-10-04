@@ -68,11 +68,12 @@ Defaults — all of these can be changed in the launcher:
 | ---------------- | ---------------------------------------- |
 | Mouse            | Aim: the nose follows the pointer (War Thunder mouse aim) |
 | `Up` / `Down`    | Pitch up / down (manual override)        |
+| `Ctrl` / `Shift` | Pitch up / down (secondary bindings)     |
 | `A` / `D`        | Roll left / right (manual override)      |
 | `Q` / `E`        | Yaw left / right (rudder)                |
 | `W` / `S`        | Throttle up / down                       |
 | `F` / `V`        | Flaps down / up (combat → takeoff → landing) |
-| `Shift`          | War emergency power (WEP, overheats)     |
+| `B`              | War emergency power (WEP, overheats)     |
 | `R`              | Respawn in the air                       |
 | `1` / `2` / `3`  | Apply test damage: left wing / engine / tail |
 | `0`              | Repair everything                        |

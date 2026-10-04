@@ -35,6 +35,16 @@ pub const ACTIONS: &[ActionInfo] = &[
         default_key: "ArrowDown",
     },
     ActionInfo {
+        name: "pitch_up_alt",
+        label: "Pitch up (alt)",
+        default_key: "ControlLeft",
+    },
+    ActionInfo {
+        name: "pitch_down_alt",
+        label: "Pitch down (alt)",
+        default_key: "ShiftLeft",
+    },
+    ActionInfo {
         name: "roll_left",
         label: "Roll left",
         default_key: "A",
@@ -102,27 +112,30 @@ pub const ACTIONS: &[ActionInfo] = &[
     ActionInfo {
         name: "wep",
         label: "War emergency power",
-        default_key: "ShiftLeft",
+        // Not Shift: that is the default for "pitch down (alt)".
+        default_key: "B",
     },
 ];
 
 // Stable indices into [`ACTIONS`] / [`Keybinds::keys`], used by the game.
 pub const PITCH_UP: usize = 0;
 pub const PITCH_DOWN: usize = 1;
-pub const ROLL_LEFT: usize = 2;
-pub const ROLL_RIGHT: usize = 3;
-pub const YAW_LEFT: usize = 4;
-pub const YAW_RIGHT: usize = 5;
-pub const THROTTLE_UP: usize = 6;
-pub const THROTTLE_DOWN: usize = 7;
-pub const RESET: usize = 8;
-pub const DAMAGE_LEFT_WING: usize = 9;
-pub const DAMAGE_ENGINE: usize = 10;
-pub const DAMAGE_TAIL: usize = 11;
-pub const REPAIR: usize = 12;
-pub const FLAPS_DOWN: usize = 13;
-pub const FLAPS_UP: usize = 14;
-pub const WEP: usize = 15;
+pub const PITCH_UP_ALT: usize = 2;
+pub const PITCH_DOWN_ALT: usize = 3;
+pub const ROLL_LEFT: usize = 4;
+pub const ROLL_RIGHT: usize = 5;
+pub const YAW_LEFT: usize = 6;
+pub const YAW_RIGHT: usize = 7;
+pub const THROTTLE_UP: usize = 8;
+pub const THROTTLE_DOWN: usize = 9;
+pub const RESET: usize = 10;
+pub const DAMAGE_LEFT_WING: usize = 11;
+pub const DAMAGE_ENGINE: usize = 12;
+pub const DAMAGE_TAIL: usize = 13;
+pub const REPAIR: usize = 14;
+pub const FLAPS_DOWN: usize = 15;
+pub const FLAPS_UP: usize = 16;
+pub const WEP: usize = 17;
 
 /// Canonical names of every key that can be bound.
 pub const SUPPORTED_KEYS: &[&str] = &[
@@ -182,6 +195,21 @@ pub const SUPPORTED_KEYS: &[&str] = &[
 /// Returns true if `key` is a recognised canonical key name.
 pub fn is_supported(key: &str) -> bool {
     SUPPORTED_KEYS.contains(&key)
+}
+
+/// A short, friendly name for a bound key, for display in the launcher and HUD.
+pub fn key_display(name: &str) -> &str {
+    match name {
+        "ControlLeft" | "ControlRight" => "Ctrl",
+        "ShiftLeft" | "ShiftRight" => "Shift",
+        "AltLeft" | "AltRight" => "Alt",
+        "ArrowUp" => "Up",
+        "ArrowDown" => "Down",
+        "ArrowLeft" => "Left",
+        "ArrowRight" => "Right",
+        "Escape" => "Esc",
+        other => other,
+    }
 }
 
 /// The player's keybinds, one entry per [`ACTIONS`] entry.
@@ -244,6 +272,11 @@ impl Keybinds {
                 }
             }
         }
+        // A clash between WEP and pitch-down can happen for configs saved before
+        // WEP moved off Shift. Keep pitch-down and restore WEP to its default.
+        if keybinds.keys[WEP] == keybinds.keys[PITCH_DOWN_ALT] {
+            keybinds.keys[WEP] = ACTIONS[WEP].default_key.to_string();
+        }
         keybinds
     }
 
@@ -285,4 +318,40 @@ pub fn config_dir() -> PathBuf {
 /// Full path to the keybinds config file.
 pub fn keybinds_path() -> PathBuf {
     config_dir().join("keybinds.conf")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_include_ctrl_and_shift_pitch() {
+        let keybinds = Keybinds::default();
+        assert_eq!(keybinds.get(PITCH_UP), "ArrowUp");
+        assert_eq!(keybinds.get(PITCH_DOWN), "ArrowDown");
+        assert_eq!(keybinds.get(PITCH_UP_ALT), "ControlLeft");
+        assert_eq!(keybinds.get(PITCH_DOWN_ALT), "ShiftLeft");
+    }
+
+    #[test]
+    fn wep_default_does_not_clash_with_pitch_down() {
+        let keybinds = Keybinds::default();
+        assert_ne!(keybinds.get(WEP), keybinds.get(PITCH_DOWN_ALT));
+    }
+
+    #[test]
+    fn old_config_with_wep_on_shift_is_migrated() {
+        // A config saved before WEP moved off Shift would have both on Shift.
+        let keybinds = Keybinds::parse("pitch_up = ArrowUp\nwep = ShiftLeft\n");
+        assert_eq!(keybinds.get(PITCH_DOWN_ALT), "ShiftLeft");
+        assert_eq!(keybinds.get(WEP), ACTIONS[WEP].default_key);
+    }
+
+    #[test]
+    fn key_display_is_friendly() {
+        assert_eq!(key_display("ControlLeft"), "Ctrl");
+        assert_eq!(key_display("ShiftLeft"), "Shift");
+        assert_eq!(key_display("ArrowUp"), "Up");
+        assert_eq!(key_display("A"), "A");
+    }
 }

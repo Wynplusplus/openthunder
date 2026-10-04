@@ -3,8 +3,9 @@
 use bevy::prelude::*;
 
 use openthunder::keybinds::{
-    DAMAGE_ENGINE, DAMAGE_LEFT_WING, DAMAGE_TAIL, FLAPS_DOWN, FLAPS_UP, PITCH_DOWN, PITCH_UP,
-    REPAIR, RESET, ROLL_LEFT, ROLL_RIGHT, THROTTLE_DOWN, THROTTLE_UP, WEP, YAW_LEFT, YAW_RIGHT,
+    DAMAGE_ENGINE, DAMAGE_LEFT_WING, DAMAGE_TAIL, FLAPS_DOWN, FLAPS_UP, PITCH_DOWN, PITCH_DOWN_ALT,
+    PITCH_UP, PITCH_UP_ALT, REPAIR, RESET, ROLL_LEFT, ROLL_RIGHT, THROTTLE_DOWN, THROTTLE_UP, WEP,
+    YAW_LEFT, YAW_RIGHT, key_display,
 };
 
 use crate::aircraft::{Aircraft, PlayerControlled};
@@ -85,7 +86,7 @@ fn update_hud(
          Throttle {thr:3.0}% {wep}   AoA {alpha:+5.1} deg   G {g:.1}\n\
          Flaps {flaps}   Wing {wing:3.0}%   Engine {eng:3.0}%   Tail {tail:3.0}%   {status}\n\
          \n\
-         Mouse: aim   {pitch_up}/{pitch_down}: pitch   {roll_left}/{roll_right}: roll   {yaw_left}/{yaw_right}: rudder\n\
+         Mouse: aim   {pitch_up}/{pitch_down}/{pitch_up_alt}/{pitch_down_alt}: pitch   {roll_left}/{roll_right}: roll   {yaw_left}/{yaw_right}: rudder\n\
          {throttle_up}/{throttle_down}: throttle   {wep_key}: WEP   {flaps_down}/{flaps_up}: flaps   {reset}: respawn\n\
          {dmg_wing}/{dmg_engine}/{dmg_tail}: damage   {repair}: repair",
         name = aircraft.spec.name,
@@ -101,21 +102,23 @@ fn update_hud(
         eng = damage.integrity(AircraftPart::Engine) * 100.0,
         tail = damage.integrity(AircraftPart::Tail) * 100.0,
         status = status,
-        pitch_up = bindings.name(PITCH_UP),
-        pitch_down = bindings.name(PITCH_DOWN),
-        roll_left = bindings.name(ROLL_LEFT),
-        roll_right = bindings.name(ROLL_RIGHT),
-        yaw_left = bindings.name(YAW_LEFT),
-        yaw_right = bindings.name(YAW_RIGHT),
-        throttle_up = bindings.name(THROTTLE_UP),
-        throttle_down = bindings.name(THROTTLE_DOWN),
-        wep_key = bindings.name(WEP),
-        flaps_down = bindings.name(FLAPS_DOWN),
-        flaps_up = bindings.name(FLAPS_UP),
-        reset = bindings.name(RESET),
-        dmg_wing = bindings.name(DAMAGE_LEFT_WING),
-        dmg_engine = bindings.name(DAMAGE_ENGINE),
-        dmg_tail = bindings.name(DAMAGE_TAIL),
-        repair = bindings.name(REPAIR),
+        pitch_up = key_display(bindings.name(PITCH_UP)),
+        pitch_down = key_display(bindings.name(PITCH_DOWN)),
+        pitch_up_alt = key_display(bindings.name(PITCH_UP_ALT)),
+        pitch_down_alt = key_display(bindings.name(PITCH_DOWN_ALT)),
+        roll_left = key_display(bindings.name(ROLL_LEFT)),
+        roll_right = key_display(bindings.name(ROLL_RIGHT)),
+        yaw_left = key_display(bindings.name(YAW_LEFT)),
+        yaw_right = key_display(bindings.name(YAW_RIGHT)),
+        throttle_up = key_display(bindings.name(THROTTLE_UP)),
+        throttle_down = key_display(bindings.name(THROTTLE_DOWN)),
+        wep_key = key_display(bindings.name(WEP)),
+        flaps_down = key_display(bindings.name(FLAPS_DOWN)),
+        flaps_up = key_display(bindings.name(FLAPS_UP)),
+        reset = key_display(bindings.name(RESET)),
+        dmg_wing = key_display(bindings.name(DAMAGE_LEFT_WING)),
+        dmg_engine = key_display(bindings.name(DAMAGE_ENGINE)),
+        dmg_tail = key_display(bindings.name(DAMAGE_TAIL)),
+        repair = key_display(bindings.name(REPAIR)),
     );
 }
