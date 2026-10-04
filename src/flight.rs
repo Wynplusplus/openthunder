@@ -557,7 +557,10 @@ fn flight_dynamics(
     ) * control_authority;
 
     // Weathervane stability: pitch toward the (instructor) trim angle of attack
-    // and yaw the nose into the airflow, with rate damping. Degraded by tail damage.
+    // and yaw the nose into the airflow. The `*_damping` terms are rate feedback
+    // that *subtract from the target rate*, so a nonzero value divides the
+    // steady-state rate (roll_damping = 2 would cut the roll rate to a third).
+    // They are all zero: the `responsiveness` lag below already damps the rates.
     let damping_authority = (ias / spec.control_ref_speed).clamp(0.0, 1.0);
     target_rates.x += -spec.pitch_stability * (alpha - aircraft.trim_alpha) * control_authority;
     target_rates.x -= spec.pitch_damping * aircraft.angular_velocity.x * damping_authority;
@@ -969,5 +972,81 @@ mod tests {
             min_authority < 0.6,
             "a dive should stiffen the controls; minimum authority was {min_authority:.2}"
         );
+    }
+
+    /// Steady-state roll rate (deg/s) for a full roll input at a given speed,
+    /// holding the speed with a simple throttle autopilot. Returns `(rate, ias)`.
+    fn steady_roll_rate(spec: AircraftSpec, speed: f32) -> (f32, f32) {
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.add_systems(Update, flight_dynamics);
+        let mut aircraft = Aircraft::new(spec);
+        aircraft.velocity = Vec3::NEG_Z * speed;
+        aircraft.throttle = 0.8;
+        aircraft.controls.roll = 1.0;
+        let entity = app
+            .world_mut()
+            .spawn((
+                Transform::from_translation(Vec3::new(0.0, 1000.0, 0.0)),
+                aircraft,
+                DamageModel::new(100.0),
+                PlayerControlled,
+            ))
+            .id();
+        let mut rate = 0.0f32;
+        for _ in 0..100 {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_secs_f32(0.02));
+            app.update();
+            let ac = app.world().get::<Aircraft>(entity).unwrap();
+            rate = ac.angular_velocity.z;
+            // Crude speed hold.
+            let throttle = (ac.throttle + (speed - ac.airspeed) * 0.02).clamp(0.0, 1.0);
+            app.world_mut()
+                .get_mut::<Aircraft>(entity)
+                .unwrap()
+                .throttle = throttle;
+        }
+        let ac = app.world().get::<Aircraft>(entity).unwrap();
+        (rate.abs().to_degrees(), ac.ias)
+    }
+
+    fn spec_named(name: &str) -> AircraftSpec {
+        AircraftSpec::from_config(
+            &openthunder::plane_config::default_planes()
+                .into_iter()
+                .find(|config| config.name == name)
+                .unwrap(),
+        )
+    }
+
+    /// Roll must behave sensibly across the speed range: mush at low speed,
+    /// peak around cruise, and stiffen toward the redline. This caught the old
+    /// `roll_damping` bug, which divided the achieved rate by three and made the
+    /// curve nearly flat.
+    #[test]
+    fn roll_rate_peaks_at_cruise_and_stiffens_with_speed() {
+        for name in ["F4U-4 Corsair", "Bf 109 G-6", "Spitfire F Mk IXc"] {
+            let spec = spec_named(name);
+            let slow = steady_roll_rate(spec.clone(), 70.0).0;
+            let cruise = steady_roll_rate(spec.clone(), 140.0).0;
+            let fast = steady_roll_rate(spec.clone(), 230.0).0;
+
+            // The cruise rate should be close to the plane's rated roll rate.
+            let rated = spec.roll_rate.to_degrees();
+            assert!(
+                cruise > rated * 0.7 && cruise < rated * 1.1,
+                "{name}: cruise roll {cruise:.0} deg/s is not near rated {rated:.0}"
+            );
+            assert!(
+                slow < cruise * 0.8,
+                "{name}: low-speed roll {slow:.0} should be well below cruise {cruise:.0}"
+            );
+            assert!(
+                fast < cruise * 0.7,
+                "{name}: high-speed roll {fast:.0} should stiffen below cruise {cruise:.0}"
+            );
+        }
     }
 }
