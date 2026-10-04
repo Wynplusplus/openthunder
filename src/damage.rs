@@ -43,8 +43,13 @@ impl AircraftPart {
     ];
 
     /// Index into [`DamageModel::parts`].
-    fn index(self) -> usize {
+    pub fn index(self) -> usize {
         self as usize
+    }
+
+    /// Inverse of [`AircraftPart::index`], for decoding network messages.
+    pub fn from_index(index: usize) -> Option<Self> {
+        AircraftPart::ALL.get(index).copied()
     }
 
     pub fn label(self) -> &'static str {

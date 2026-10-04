@@ -19,7 +19,7 @@ use openthunder::protocol::{ClientMessage, PlayerSnapshot, ServerMessage};
 use openthunder::settings::Settings;
 
 use crate::aircraft::{Aircraft, AircraftRegistry, PlayerControlled, spawn_aircraft_model};
-use crate::damage::DamageModel;
+use crate::damage::{AircraftPart, DamageModel};
 
 /// How often the local state is sent to the server.
 const SEND_HZ: f32 = 15.0;
@@ -234,7 +234,8 @@ fn receive_snapshots(
     registry: Res<AircraftRegistry>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut remote: Query<(Entity, &mut RemotePlayer)>,
+    mut remote: Query<(Entity, &mut RemotePlayer, &mut DamageModel), Without<PlayerControlled>>,
+    mut local: Query<&mut DamageModel, (With<PlayerControlled>, Without<RemotePlayer>)>,
 ) {
     let Some(incoming) = &client.incoming else {
         return;
@@ -256,9 +257,30 @@ fn receive_snapshots(
                 );
             }
             Ok(ServerMessage::PlayerLeft { id }) => {
-                for (entity, player) in &mut remote {
+                for (entity, player, _) in &mut remote {
                     if player.id == id {
                         commands.entity(entity).despawn();
+                    }
+                }
+            }
+            Ok(ServerMessage::Hit {
+                target,
+                section,
+                damage,
+            }) => {
+                let Some(part) = AircraftPart::from_index(section as usize) else {
+                    continue;
+                };
+                if Some(target) == local_id {
+                    if let Ok(mut model) = local.single_mut() {
+                        model.apply_damage(part, damage);
+                    }
+                } else {
+                    for (_, player, mut model) in &mut remote {
+                        if player.id == target {
+                            model.apply_damage(part, damage);
+                            break;
+                        }
                     }
                 }
             }
@@ -273,7 +295,7 @@ fn apply_snapshot(
     registry: &AircraftRegistry,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
-    remote: &mut Query<(Entity, &mut RemotePlayer)>,
+    remote: &mut Query<(Entity, &mut RemotePlayer, &mut DamageModel), Without<PlayerControlled>>,
     local_id: Option<u64>,
     players: &[PlayerSnapshot],
 ) {
@@ -292,7 +314,7 @@ fn apply_snapshot(
         );
 
         let mut found = false;
-        for (_, mut existing) in remote.iter_mut() {
+        for (_, mut existing, _) in remote.iter_mut() {
             if existing.id == player.id {
                 existing.target_position = position;
                 existing.target_rotation = rotation;
@@ -328,7 +350,7 @@ fn apply_snapshot(
     }
 
     // Despawn players that disappeared from the snapshot.
-    for (entity, player) in remote.iter_mut() {
+    for (entity, player, _) in remote.iter_mut() {
         if !seen.contains_key(&player.id) {
             commands.entity(entity).despawn();
         }

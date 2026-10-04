@@ -9,11 +9,13 @@
 
 use bevy::prelude::*;
 use openthunder::keybinds::FIRE;
+use openthunder::protocol::ClientMessage;
 
 use crate::aircraft::{Aircraft, PlayerControlled};
 use crate::damage::{AircraftPart, DamageModel};
 use crate::flight::Bindings;
 use crate::menu::GameMenu;
+use crate::net::{NetClient, RemotePlayer};
 
 /// Gravity applied to projectiles, m/s^2.
 const GRAVITY: f32 = 9.81;
@@ -166,6 +168,7 @@ fn fire_guns(
 fn update_projectiles(
     time: Res<Time>,
     mut commands: Commands,
+    client: Res<NetClient>,
     mut feedback: ResMut<CombatFeedback>,
     mut projectiles: Query<(Entity, &mut Transform, &mut Projectile), Without<DamageModel>>,
     mut targets: Query<
@@ -174,6 +177,7 @@ fn update_projectiles(
             &Transform,
             &mut DamageModel,
             Option<&PlayerControlled>,
+            Option<&RemotePlayer>,
         ),
         Without<Projectile>,
     >,
@@ -206,7 +210,7 @@ fn update_projectiles(
         }
 
         // Swept hit test against every aircraft (skip the shooter).
-        for (target, target_transform, mut damage, player) in &mut targets {
+        for (target, target_transform, mut damage, player, remote) in &mut targets {
             if target == owner {
                 continue;
             }
@@ -215,6 +219,17 @@ fn update_projectiles(
             };
             let point = p0.lerp(p1, t);
             let section = classify_hit(target_transform, point);
+            // Tell the server about hits on other players so everyone agrees
+            // (the server relays it to the others; we apply it locally now).
+            if let Some(remote) = remote {
+                if let Some(outgoing) = &client.outgoing {
+                    let _ = outgoing.send(ClientMessage::Hit {
+                        target: remote.id,
+                        section: section.index() as u8,
+                        damage: damage_amount,
+                    });
+                }
+            }
             damage.apply_damage(section, damage_amount);
             if player.is_some() {
                 feedback.player_hit = 0.6;

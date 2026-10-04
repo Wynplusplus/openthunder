@@ -41,6 +41,12 @@ pub enum ClientMessage {
     },
     /// Graceful disconnect.
     Leave,
+    /// Report that we hit another player.
+    Hit {
+        target: u64,
+        section: u8,
+        damage: f32,
+    },
 }
 
 /// A message sent from the server to a client.
@@ -56,6 +62,12 @@ pub enum ServerMessage {
     Snapshot { players: Vec<PlayerSnapshot> },
     /// A player disconnected.
     PlayerLeft { id: u64 },
+    /// A player was hit (relayed to everyone but the shooter).
+    Hit {
+        target: u64,
+        section: u8,
+        damage: f32,
+    },
     /// The connection was rejected (bad version, server full, ...).
     Error { reason: String },
 }
@@ -140,6 +152,11 @@ impl ClientMessage {
                 fmt3(velocity[2]),
             ),
             ClientMessage::Leave => "LEAVE".to_string(),
+            ClientMessage::Hit {
+                target,
+                section,
+                damage,
+            } => format!("HIT\t{target}\t{section}\t{}", fmt3(*damage)),
         }
     }
 
@@ -172,6 +189,18 @@ impl ClientMessage {
                 })
             }
             Some("LEAVE") => Ok(ClientMessage::Leave),
+            Some("HIT") => {
+                if fields.len() != 4 {
+                    return Err(ProtocolError("HIT wants 4 fields".into()));
+                }
+                Ok(ClientMessage::Hit {
+                    target: parse_u64(fields[1])?,
+                    section: fields[2]
+                        .parse()
+                        .map_err(|_| ProtocolError("bad section".into()))?,
+                    damage: parse_f32(fields[3])?,
+                })
+            }
             other => Err(ProtocolError(format!("unknown message {other:?}"))),
         }
     }
@@ -209,6 +238,11 @@ impl ServerMessage {
                 out
             }
             ServerMessage::PlayerLeft { id } => format!("PLAYER_LEFT\t{id}"),
+            ServerMessage::Hit {
+                target,
+                section,
+                damage,
+            } => format!("HIT\t{target}\t{section}\t{}", fmt3(*damage)),
             ServerMessage::Error { reason } => format!("ERROR\t{}", sanitize_field(reason)),
         }
     }
@@ -257,6 +291,18 @@ impl ServerMessage {
                     id: parse_u64(fields[1])?,
                 })
             }
+            Some("HIT") => {
+                if fields.len() != 4 {
+                    return Err(ProtocolError("HIT wants 4 fields".into()));
+                }
+                Ok(ServerMessage::Hit {
+                    target: parse_u64(fields[1])?,
+                    section: fields[2]
+                        .parse()
+                        .map_err(|_| ProtocolError("bad section".into()))?,
+                    damage: parse_f32(fields[3])?,
+                })
+            }
             Some("ERROR") => Ok(ServerMessage::Error {
                 reason: fields.get(1).copied().unwrap_or("unknown").to_string(),
             }),
@@ -291,6 +337,11 @@ mod tests {
             velocity: [10.0, 0.0, -150.0],
         });
         round_trip_client(ClientMessage::Leave);
+        round_trip_client(ClientMessage::Hit {
+            target: 5,
+            section: 2,
+            damage: 12.0,
+        });
     }
 
     #[test]
@@ -321,6 +372,11 @@ mod tests {
             ],
         });
         round_trip_server(ServerMessage::PlayerLeft { id: 3 });
+        round_trip_server(ServerMessage::Hit {
+            target: 5,
+            section: 2,
+            damage: 12.0,
+        });
         round_trip_server(ServerMessage::Error {
             reason: "server full".into(),
         });
