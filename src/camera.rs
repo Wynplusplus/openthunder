@@ -103,6 +103,7 @@ fn chase_camera(
     look: Res<FreeLook>,
     target: Query<&Transform, (With<PlayerControlled>, Without<ChaseCamera>)>,
     mut camera: Query<&mut Transform, With<ChaseCamera>>,
+    mut rig: Local<Quat>,
 ) {
     let Ok(aircraft) = target.single() else {
         return;
@@ -113,24 +114,27 @@ fn chase_camera(
 
     let dt = time.delta_secs();
 
-    // The camera rig (position offset + look direction) is the aircraft's frame
-    // rotated by the free-look orbit, so the aircraft stays put on screen.
-    let rig = aircraft.rotation * look.rotation();
+    // The camera rig is the aircraft's frame rotated by the free-look orbit, so
+    // the aircraft stays put on screen while the camera circles it.
+    //
+    // We smooth the *rig* (a rotation) rather than the world position: that way
+    // the camera always sits exactly on the circle of radius |offset| around the
+    // aircraft instead of cutting the corner and drifting in and out.
+    let target_rig = aircraft.rotation * look.rotation();
+    let follow = (1.0 - (-10.0 * dt).exp()).clamp(0.0, 1.0);
+    *rig = rig.slerp(target_rig, follow);
 
-    // Desired position: behind (+Z is behind, since the nose is -Z) and above.
-    let desired = aircraft.translation + rig * Vec3::new(0.0, 3.0, 18.0);
-    let follow = 1.0 - (-6.0 * dt).exp();
-    camera_transform.translation = camera_transform
-        .translation
-        .lerp(desired, follow.clamp(0.0, 1.0));
+    // Constant-radius offset: behind (+Z is behind, since the nose is -Z) and up.
+    let offset = *rig * Vec3::new(0.0, 3.0, 18.0);
+    camera_transform.translation = aircraft.translation + offset;
 
     // Look along the (free-look rotated) nose. `looking_to` guarantees the
     // camera's forward is exactly this direction.
-    let forward = rig * Vec3::NEG_Z;
+    let forward = *rig * Vec3::NEG_Z;
 
     // Partially inherit the aircraft's roll for a dynamic feel. Weighting world
     // up avoids a degenerate up-vector when inverted.
-    let up = rig * Vec3::Y;
+    let up = *rig * Vec3::Y;
     let camera_up = (up + Vec3::Y * 2.0).normalize_or_zero();
     let camera_up = if camera_up.length_squared() < 0.5 {
         Vec3::Y
