@@ -78,12 +78,17 @@ Defaults — all of these can be changed in the launcher:
 | `R`              | Respawn in the air                       |
 | `1` / `2` / `3`  | Apply test damage: left wing / engine / tail |
 | `0`              | Repair everything                        |
+| `Esc`            | In-game menu (Resume / Quit to Desktop)  |
 
 Move the mouse once to "engage" mouse aim. From then on the aircraft points
 wherever the cursor is: the instructor banks into the turn and pulls so the nose
 follows the pointer. Move the cursor off-centre to turn, and bring it back to the
 centre to level off and fly straight. The keyboard pitch/roll/rudder keys remain
 available as manual overrides, and `A`/`D` always give full roll authority.
+
+Press **`Esc`** at any time for the in-game menu (Resume / Quit to Desktop). The
+world **keeps flying** while it is open — the simulation is never paused; the
+aircraft just continues with neutral controls. Use `Up`/`Down` and `Enter`.
 
 ### Instructor (mouse aim)
 
@@ -195,7 +200,7 @@ src/
   lib.rs             shared library (used by the game and the launcher)
   keybinds.rs        keybind config: defaults, load/save, supported keys
   planes.rs          the list of aircraft offered by the launcher
-  settings.rs        player settings (selected aircraft)
+  settings.rs        player settings (aircraft + display mode)
   bin/launcher.rs    the TUI launcher (raw ANSI + libc termios)
   aircraft.rs        AircraftSpec + specs, registry, runtime state, spawning
   flight.rs          keybind resource, controls (mouse instructor + keyboard), flight model
@@ -203,6 +208,7 @@ src/
   world.rs           ground, runway, scattered landmarks, sun
   damage.rs          per-section damage model + debug damage keys
   hud.rs             telemetry overlay
+  menu.rs            in-game menu (Esc); the world keeps running while open
 ```
 
 ## Known simplifications

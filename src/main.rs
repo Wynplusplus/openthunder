@@ -10,6 +10,7 @@ mod camera;
 mod damage;
 mod flight;
 mod hud;
+mod menu;
 mod world;
 
 use bevy::prelude::*;
@@ -50,6 +51,7 @@ fn main() {
             camera::ChaseCameraPlugin,
             damage::DamagePlugin,
             hud::HudPlugin,
+            menu::GameMenuPlugin,
         ))
         .run();
 }

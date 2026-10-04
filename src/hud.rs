@@ -88,7 +88,7 @@ fn update_hud(
          \n\
          Mouse: aim   {pitch_up}/{pitch_down}/{pitch_up_alt}/{pitch_down_alt}: pitch   {roll_left}/{roll_right}: roll   {yaw_left}/{yaw_right}: rudder\n\
          {throttle_up}/{throttle_down}: throttle   {wep_key}: WEP   {flaps_down}/{flaps_up}: flaps   {reset}: respawn\n\
-         {dmg_wing}/{dmg_engine}/{dmg_tail}: damage   {repair}: repair",
+         {dmg_wing}/{dmg_engine}/{dmg_tail}: damage   {repair}: repair   Esc: menu",
         name = aircraft.spec.name,
         speed = speed_kmh,
         ias = ias_kmh,

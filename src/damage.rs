@@ -145,8 +145,12 @@ impl Plugin for DamagePlugin {
 fn debug_damage_input(
     keys: Res<ButtonInput<KeyCode>>,
     bindings: Res<Bindings>,
+    menu: Res<crate::menu::GameMenu>,
     mut query: Query<&mut DamageModel, With<PlayerControlled>>,
 ) {
+    if menu.open {
+        return;
+    }
     let Ok(mut damage) = query.single_mut() else {
         return;
     };

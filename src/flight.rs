@@ -32,6 +32,7 @@ use crate::aircraft::{
 };
 use crate::camera::ChaseCamera;
 use crate::damage::{AircraftPart, DamageModel};
+use crate::menu::GameMenu;
 
 /// Canonical key names -> Bevy key codes. The same names are validated by the
 /// launcher against `openthunder::keybinds::SUPPORTED_KEYS`.
@@ -212,6 +213,7 @@ fn read_player_input(
     bindings: Res<Bindings>,
     mouse_motion: Res<AccumulatedMouseMotion>,
     mut mouse_aim: ResMut<MouseAim>,
+    menu: Res<GameMenu>,
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<ChaseCamera>>,
     mut query: Query<(&Transform, &mut Aircraft), With<PlayerControlled>>,
@@ -219,6 +221,14 @@ fn read_player_input(
     let Ok((transform, mut aircraft)) = query.single_mut() else {
         return;
     };
+
+    // While the in-game menu is open the world keeps simulating, but the player
+    // is not steering: hand the controls back to the instructor (neutral).
+    if menu.open {
+        aircraft.controls = Controls::default();
+        return;
+    }
+
     let dt = time.delta_secs();
     let spec = aircraft.spec.clone();
 
@@ -367,9 +377,10 @@ fn aim_controls(rotation: Quat, desired_dir: Vec3, bank: f32) -> (f32, f32, f32)
 fn reset_aircraft(
     keys: Res<ButtonInput<KeyCode>>,
     bindings: Res<Bindings>,
+    menu: Res<GameMenu>,
     mut query: Query<(&mut Transform, &mut Aircraft), With<PlayerControlled>>,
 ) {
-    if !bindings.just_pressed(&keys, RESET) {
+    if menu.open || !bindings.just_pressed(&keys, RESET) {
         return;
     }
     let Ok((mut transform, mut aircraft)) = query.single_mut() else {
@@ -576,6 +587,7 @@ mod tests {
             .init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<AccumulatedMouseMotion>()
             .init_resource::<MouseAim>()
+            .init_resource::<crate::menu::GameMenu>()
             .insert_resource(Bindings::from_config(&Keybinds::default()))
             .add_systems(Update, read_player_input);
 
@@ -729,5 +741,17 @@ mod tests {
         let (mut app, entity) = input_app(0.0);
         press_and_update(&mut app, KeyCode::ShiftLeft);
         assert!(pitch_of(&app, entity) < 0.0, "Shift should pitch down");
+    }
+
+    #[test]
+    fn open_menu_neutralizes_player_controls() {
+        let (mut app, entity) = input_app(0.0);
+        app.world_mut().resource_mut::<crate::menu::GameMenu>().open = true;
+        press_and_update(&mut app, KeyCode::KeyD);
+        assert_eq!(
+            roll_of(&app, entity),
+            0.0,
+            "the menu should take over the controls"
+        );
     }
 }
