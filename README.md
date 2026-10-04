@@ -179,6 +179,30 @@ for the limits and stiffening) is derived from it.
 - **Structural limits**: each aircraft has its own g limit and IAS redline;
   exceeding them damages the airframe.
 - **Control stiffening / compressibility** at high speed.
+- **G-limiter**: the instructor eases off as the wing approaches its structural
+  g limit, so mouse aim alone will not normally rip the airframe.
+- **Pilot g-tolerance**: a trained pilot holds ~6.5 g; harder or longer pulls
+  tunnel the vision down to a blackout (or a red-out when pushing), with stamina
+  and recovery, exactly like Air RB.
+
+### Pilot g-tolerance and blackout
+
+Implemented in `src/pilot.rs`. The pilot is modelled separately from the
+airframe, as in War Thunder:
+
+- A trained crew tolerates about **6.5 g** (WT's maxed "G-tolerance" is ~6.9 g)
+  and **−3 g**. Pull past that and a **blackout veil** closes in from the edges;
+  push past it and you **red out** instead.
+- **Stamina** drains while you manoeuvre and recovers in level flight. A tired
+  pilot tolerates about 30% less g, so a long fight wears you down.
+- At full blackout the pilot is **unconscious and loses control** until the
+  aircraft unloads and vision returns.
+- The **structural g limit is higher than the pilot's tolerance**, so in a hard
+  turn you black out well before the wings are at risk — just like Air RB.
+
+The overlay is a procedurally generated radial gradient (tunnel vision) tinted
+black for blackout or red for red-out.
+
 
 ## Aircraft
 
@@ -274,6 +298,7 @@ src/
   menu.rs            in-game menu (Esc); the world keeps running while open
   spawn_menu.rs      pre-spawn plane selection screen
   crosshair.rs       fixed gun crosshair at screen centre
+  pilot.rs           crew g-tolerance, blackout/redout, tunnel-vision overlay
 ```
 
 ## Known simplifications
@@ -281,7 +306,8 @@ src/
 - Lift acts along the body up axis (not exactly perpendicular to the airflow),
   which is fine at normal angles of attack but not at extreme ones.
 - Ground interaction is a soft clamp; there is no proper landing/crash.
-- No combat, no multiplayer, no audio.
+- The pilot model uses a fixed crew-skill level; there is no crew progression.
+- No audio.
 
 ---
 

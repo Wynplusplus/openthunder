@@ -254,8 +254,17 @@ pub struct Aircraft {
     pub alpha: f32,
     /// Sideslip angle, radians.
     pub beta: f32,
-    /// Approximate load factor in g.
+    /// Signed load factor in g (positive = pulling, negative = pushing).
     pub g_load: f32,
+
+    // --- Pilot physiology (see `pilot.rs`) ---
+    /// Positive-g blackout veil, `0.0` (clear) .. `1.0` (unconscious).
+    pub blackout: f32,
+    /// Negative-g redout veil, `0.0` (clear) .. `1.0` (unconscious).
+    pub redout: f32,
+    /// Pilot stamina, `1.0` (fresh) .. `0.0` (exhausted). Low stamina lowers
+    /// the pilot's g tolerance.
+    pub stamina: f32,
 }
 
 impl Aircraft {
@@ -281,6 +290,9 @@ impl Aircraft {
             alpha: 0.0,
             beta: 0.0,
             g_load: 1.0,
+            blackout: 0.0,
+            redout: 0.0,
+            stamina: 1.0,
         }
     }
 

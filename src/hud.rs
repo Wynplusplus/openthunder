@@ -101,10 +101,22 @@ fn update_hud(
         String::new()
     };
 
+    let pilot = if aircraft.blackout >= 1.0 {
+        "BLACKED OUT".to_string()
+    } else if aircraft.redout >= 1.0 {
+        "REDDED OUT".to_string()
+    } else if aircraft.blackout > 0.02 {
+        format!("blackout {:.0}%", aircraft.blackout * 100.0)
+    } else if aircraft.redout > 0.02 {
+        format!("redout {:.0}%", aircraft.redout * 100.0)
+    } else {
+        "clear".to_string()
+    };
+
     **text = format!(
         "{name}   {connection}\n\
          TAS {speed:5.0} km/h   IAS {ias:5.0} km/h   Alt {alt:6.0} m\n\
-         Throttle {thr:3.0}% {wep}   AoA {alpha:+5.1} deg   G {g:.1}\n\
+         Throttle {thr:3.0}% {wep}   AoA {alpha:+5.1} deg   G {g:+.1}   Stamina {stamina:3.0}%   Pilot {pilot}\n\
          Flaps {flaps}   Wing {wing:3.0}%   Engine {eng:3.0}%   Tail {tail:3.0}%   {status}\n\
          Ammo {ammo}   {guns}{hit_marker}\n\
          \n\
@@ -124,6 +136,8 @@ fn update_hud(
         wep = wep,
         alpha = alpha_deg,
         g = aircraft.g_load,
+        stamina = aircraft.stamina * 100.0,
+        pilot = pilot,
         flaps = aircraft.flaps.label(),
         wing = damage.integrity(AircraftPart::LeftWing) * 100.0,
         eng = damage.integrity(AircraftPart::Engine) * 100.0,

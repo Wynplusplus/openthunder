@@ -14,6 +14,7 @@ mod flight;
 mod hud;
 mod menu;
 mod net;
+mod pilot;
 mod spawn_menu;
 mod world;
 
@@ -60,6 +61,7 @@ fn main() {
             combat::CombatPlugin,
             spawn_menu::SpawnMenuPlugin,
             crosshair::CrosshairPlugin,
+            pilot::PilotPlugin,
         ))
         .run();
 }

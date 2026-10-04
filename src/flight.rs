@@ -236,6 +236,13 @@ fn read_player_input(
         return;
     }
 
+    // A blacked-out or redded-out pilot cannot move the controls. The aircraft
+    // keeps flying on its trim (and unloads), so the pilot comes back round.
+    if aircraft.blackout >= 1.0 || aircraft.redout >= 1.0 {
+        aircraft.controls = Controls::default();
+        return;
+    }
+
     let dt = time.delta_secs();
     let spec = aircraft.spec.clone();
 
@@ -404,6 +411,9 @@ fn reset_aircraft(
     aircraft.flaps = FlapSetting::Up;
     aircraft.flap_position = 0.0;
     aircraft.trim_alpha = aircraft.spec.trim_alpha;
+    aircraft.blackout = 0.0;
+    aircraft.redout = 0.0;
+    aircraft.stamina = 1.0;
     aircraft.ammo = aircraft.spec.guns.iter().map(|gun| gun.ammo).collect();
     aircraft.fire_timer = vec![0.0; aircraft.spec.guns.len()];
 }
@@ -567,7 +577,10 @@ fn flight_dynamics(
     transform.rotation = (transform.rotation * delta_rotation).normalize();
 
     // --- Telemetry ---
-    aircraft.g_load = lift.length() / (spec.mass * 9.81);
+    // Signed load factor along the body-up axis: positive when pulling, negative
+    // when pushing, so the pilot model can tell blackout from redout.
+    let body_up = rotation * Vec3::Y;
+    aircraft.g_load = lift.dot(body_up) / (spec.mass * 9.81);
 
     // --- WEP heat: builds while used, cools otherwise ---
     if aircraft.wep {
@@ -577,7 +590,7 @@ fn flight_dynamics(
     }
 
     // --- Structural limits: over-g or over-speed damages the airframe ---
-    let over_g = (aircraft.g_load - spec.g_limit).max(0.0);
+    let over_g = (aircraft.g_load.abs() - spec.g_limit).max(0.0);
     let over_ias = (ias - spec.max_ias).max(0.0);
     if over_g > 0.0 || over_ias > 0.0 {
         let amount = (over_g * 0.3 + over_ias * 0.01) * dt * 10.0;
@@ -823,6 +836,86 @@ mod tests {
             roll_of(&app, entity),
             0.0,
             "the menu should take over the controls"
+        );
+    }
+
+    /// Drives `flight_dynamics` for a fixed number of 20 ms steps with a fixed
+    /// pitch input and returns the final signed load factor.
+    fn run_pull(pitch: f32, steps: usize) -> f32 {
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.add_systems(Update, flight_dynamics);
+
+        let mut aircraft = Aircraft::new(corsair());
+        aircraft.velocity = Vec3::NEG_Z * aircraft.spec.cruise_speed;
+        aircraft.controls.pitch = pitch;
+        let entity = app
+            .world_mut()
+            .spawn((
+                Transform::from_translation(Vec3::new(0.0, 1000.0, 0.0)),
+                aircraft,
+                DamageModel::new(100.0),
+                PlayerControlled,
+            ))
+            .id();
+
+        for _ in 0..steps {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_secs_f32(0.02));
+            app.update();
+        }
+        app.world().get::<Aircraft>(entity).unwrap().g_load
+    }
+
+    /// The pilot model needs a signed load factor: pulling is positive, pushing
+    /// negative. `lift.length()` used to hide the sign.
+    #[test]
+    fn load_factor_is_signed_for_pull_and_push() {
+        assert!(
+            run_pull(0.6, 60) > 1.5,
+            "pulling should give positive g, got {}",
+            run_pull(0.6, 60)
+        );
+        assert!(
+            run_pull(-1.0, 60) < -0.5,
+            "pushing should give negative g, got {}",
+            run_pull(-1.0, 60)
+        );
+    }
+
+    /// A hard pull in normal flight should load the wing past the pilot's ~6.5 g
+    /// tolerance, so blackout is actually reachable in a fight.
+    #[test]
+    fn a_hard_pull_exceeds_the_pilot_g_tolerance() {
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.add_systems(Update, flight_dynamics);
+
+        let mut aircraft = Aircraft::new(corsair());
+        aircraft.velocity = Vec3::NEG_Z * 200.0;
+        aircraft.controls.pitch = 1.0;
+        let entity = app
+            .world_mut()
+            .spawn((
+                Transform::from_translation(Vec3::new(0.0, 1000.0, 0.0)),
+                aircraft,
+                DamageModel::new(100.0),
+                PlayerControlled,
+            ))
+            .id();
+
+        let mut peak: f32 = 0.0;
+        for _ in 0..200 {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_secs_f32(0.02));
+            app.update();
+            peak = peak.max(app.world().get::<Aircraft>(entity).unwrap().g_load);
+        }
+        assert!(
+            peak > crate::pilot::CrewSkills::default().g_tolerance,
+            "hard pull only reached {peak:.1} g"
         );
     }
 }
