@@ -17,6 +17,10 @@ pub struct Settings {
     pub plane: String,
     /// Start the game fullscreen (borderless) instead of in a window.
     pub fullscreen: bool,
+    /// Server address (`host:port`) to join, or empty for single-player.
+    pub server: String,
+    /// Name shown to other players.
+    pub player_name: String,
 }
 
 impl Default for Settings {
@@ -24,7 +28,16 @@ impl Default for Settings {
         Self {
             plane: planes::default_plane().to_string(),
             fullscreen: true,
+            server: String::new(),
+            player_name: "Pilot".to_string(),
         }
+    }
+}
+
+impl Settings {
+    /// True when the game should connect to a server.
+    pub fn multiplayer(&self) -> bool {
+        !self.server.trim().is_empty()
     }
 }
 
@@ -64,6 +77,13 @@ impl Settings {
                 }
             } else if name.trim() == "fullscreen" {
                 settings.fullscreen = matches!(value.trim(), "true" | "1" | "yes" | "on");
+            } else if name.trim() == "server" {
+                settings.server = value.trim().to_string();
+            } else if name.trim() == "player_name" {
+                let value = value.trim();
+                if !value.is_empty() {
+                    settings.player_name = value.to_string();
+                }
             }
         }
         settings
@@ -71,7 +91,7 @@ impl Settings {
 
     pub fn to_config_string(&self) -> String {
         format!(
-            "# OpenThunder settings\n# Aircraft: one of {}\nplane = {}\nfullscreen = {}\n",
+            "# OpenThunder settings\n# Aircraft: one of {}\nplane = {}\nfullscreen = {}\n# server: host:port, or blank for single-player\nserver = {}\nplayer_name = {}\n",
             planes::PLANES
                 .iter()
                 .map(|plane| plane.id)
@@ -79,6 +99,8 @@ impl Settings {
                 .join(", "),
             self.plane,
             self.fullscreen,
+            self.server,
+            self.player_name,
         )
     }
 
@@ -119,9 +141,20 @@ mod tests {
         let settings = Settings {
             plane: "Spitfire F Mk IXc".to_string(),
             fullscreen: false,
+            server: "127.0.0.1:7777".to_string(),
+            player_name: "Wyn".to_string(),
         };
         let parsed = Settings::parse(&settings.to_config_string());
         assert_eq!(parsed.plane, "Spitfire F Mk IXc");
         assert!(!parsed.fullscreen);
+        assert_eq!(parsed.server, "127.0.0.1:7777");
+        assert_eq!(parsed.player_name, "Wyn");
+        assert!(parsed.multiplayer());
+    }
+
+    #[test]
+    fn blank_server_means_singleplayer() {
+        let settings = Settings::parse("plane = F4U-4 Corsair\nserver = \n");
+        assert!(!settings.multiplayer());
     }
 }

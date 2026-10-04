@@ -13,6 +13,9 @@ Right now it contains only what is needed to *fly around a simple map*:
 - Three aircraft, each tuned to its War Thunder data sheet: the **F4U-4 Corsair**,
   the **Bf 109 G-6** and the **Spitfire F Mk IXc**. Pick one in the launcher.
   New aircraft are pure data — see below.
+- **Multiplayer** on a dedicated server (see the companion
+  [openthunder_server](https://github.com/Wynplusplus/openthunder_server) repo):
+  pick a server in the launcher and fly with others.
 
 There is **no combat yet**.
 
@@ -39,10 +42,11 @@ cargo run --bin launcher  # the TUI launcher
 `cargo run --bin launcher` opens a small terminal UI (built with plain ANSI
 escapes, no extra TUI dependency) where you can:
 
-- **Launch game** — starts the game (with the chosen aircraft) and returns to the
-  launcher when it exits.
+- **Launch game** — starts the game (with the chosen aircraft and server) and
+  returns to the launcher when it exits.
 - **Select aircraft** — choose between the F4U-4 Corsair, Bf 109 G-6 and
   Spitfire F Mk IXc.
+- **Server** — single-player, or one of the servers in `servers.conf`.
 - **Display** — switch between **Fullscreen** (default) and Windowed.
 - **Edit keybinds** — pick an action, press a new key, and it is saved instantly.
 - **Reset keybinds to defaults**.
@@ -51,13 +55,36 @@ Settings are stored in shared config files:
 
 ```
 $XDG_CONFIG_HOME/openthunder/keybinds.conf     # keybinds
-$XDG_CONFIG_HOME/openthunder/settings.conf     # aircraft + display mode
+$XDG_CONFIG_HOME/openthunder/settings.conf     # aircraft, server, display, name
+$XDG_CONFIG_HOME/openthunder/servers.conf      # server list (name = host:port)
 # or ~/.config/openthunder/...
 ```
 
 They are plain `name = value` text files, so you can edit them by hand too. The
 game loads them at startup (and creates them with defaults if missing). You can
-also override the aircraft on the command line: `cargo run -- --plane "Bf 109 G-6"`.
+also override things on the command line, e.g.
+`cargo run -- --plane "Bf 109 G-6" --server 127.0.0.1:7777`.
+
+---
+
+## Multiplayer
+
+OpenThunder can join a dedicated server (a separate repo,
+[openthunder_server](https://github.com/Wynplusplus/openthunder_server)). The
+server keeps the player roster and broadcasts snapshots at 20 Hz; the client
+streams its own aircraft state and renders everyone else.
+
+1. Start a server: `cargo run --release` in `openthunder_server` (listens on
+   `0.0.0.0:7777`).
+2. In the launcher choose **Server → Local**, or run the game with
+   `--server 127.0.0.1:7777`.
+3. Fly together. Add your own servers in `servers.conf`.
+
+Maps and gamemodes live on the **server**: a map file picks a gamemode and
+configures its rules, so both are easy to extend. See the server repo's README.
+
+The HUD shows the connection status (single-player / connecting / online / map +
+gamemode).
 
 ---
 
@@ -200,10 +227,13 @@ src/
   lib.rs             shared library (used by the game and the launcher)
   keybinds.rs        keybind config: defaults, load/save, supported keys
   planes.rs          the list of aircraft offered by the launcher
-  settings.rs        player settings (aircraft + display mode)
+  servers.rs         the server list shown by the launcher
+  settings.rs        player settings (aircraft, server, display, name)
+  protocol.rs        wire protocol (shared verbatim with the server repo)
   bin/launcher.rs    the TUI launcher (raw ANSI + libc termios)
   aircraft.rs        AircraftSpec + specs, registry, runtime state, spawning
   flight.rs          keybind resource, controls (mouse instructor + keyboard), flight model
+  net.rs             multiplayer client (background threads + remote aircraft)
   camera.rs          third-person chase camera + distance fog
   world.rs           ground, runway, scattered landmarks, sun
   damage.rs          per-section damage model + debug damage keys

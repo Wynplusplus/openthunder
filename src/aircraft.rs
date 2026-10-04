@@ -503,6 +503,20 @@ pub fn spawn_aircraft(
         ))
         .id();
 
+    spawn_aircraft_model(commands, meshes, materials, &spec, root);
+    root
+}
+
+/// Builds the visual model for `spec` as children of `root`.
+///
+/// Used for both the player's aircraft and remote (multiplayer) ones.
+pub fn spawn_aircraft_model(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    spec: &AircraftSpec,
+    root: Entity,
+) {
     // Shared materials.
     let body = materials.add(StandardMaterial {
         base_color: spec.body_color,
@@ -563,8 +577,6 @@ pub fn spawn_aircraft(
             Propeller { angle: 0.0 },
         ));
     });
-
-    root
 }
 
 /// Spin the propeller visual at a rate proportional to engine throttle.

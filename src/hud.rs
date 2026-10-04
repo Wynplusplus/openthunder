@@ -11,6 +11,7 @@ use openthunder::keybinds::{
 use crate::aircraft::{Aircraft, PlayerControlled};
 use crate::damage::{AircraftPart, DamageModel};
 use crate::flight::Bindings;
+use crate::net::NetClient;
 
 #[derive(Component)]
 struct HudText;
@@ -44,6 +45,7 @@ fn spawn_hud(mut commands: Commands) {
 
 fn update_hud(
     bindings: Res<Bindings>,
+    client: Res<NetClient>,
     aircraft: Query<(&Aircraft, &Transform, &DamageModel), With<PlayerControlled>>,
     mut hud: Query<&mut Text, With<HudText>>,
 ) {
@@ -53,6 +55,7 @@ fn update_hud(
     let Ok(mut text) = hud.single_mut() else {
         return;
     };
+    let connection = client.status.lock().unwrap().label();
 
     let speed_kmh = aircraft.airspeed * 3.6;
     let ias_kmh = aircraft.ias * 3.6;
@@ -81,7 +84,7 @@ fn update_hud(
     };
 
     **text = format!(
-        "{name}\n\
+        "{name}   {connection}\n\
          TAS {speed:5.0} km/h   IAS {ias:5.0} km/h   Alt {alt:6.0} m\n\
          Throttle {thr:3.0}% {wep}   AoA {alpha:+5.1} deg   G {g:.1}\n\
          Flaps {flaps}   Wing {wing:3.0}%   Engine {eng:3.0}%   Tail {tail:3.0}%   {status}\n\
@@ -90,6 +93,7 @@ fn update_hud(
          {throttle_up}/{throttle_down}: throttle   {wep_key}: WEP   {flaps_down}/{flaps_up}: flaps   {reset}: respawn\n\
          {dmg_wing}/{dmg_engine}/{dmg_tail}: damage   {repair}: repair   Esc: menu",
         name = aircraft.spec.name,
+        connection = connection,
         speed = speed_kmh,
         ias = ias_kmh,
         alt = altitude,

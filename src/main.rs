@@ -11,6 +11,7 @@ mod damage;
 mod flight;
 mod hud;
 mod menu;
+mod net;
 mod world;
 
 use bevy::prelude::*;
@@ -52,6 +53,7 @@ fn main() {
             damage::DamagePlugin,
             hud::HudPlugin,
             menu::GameMenuPlugin,
+            net::NetPlugin,
         ))
         .run();
 }
