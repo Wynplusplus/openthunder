@@ -88,6 +88,8 @@ impl NetClient {
 #[derive(Component)]
 pub struct RemotePlayer {
     pub id: u64,
+    pub name: String,
+    pub team: u8,
     pub target_position: Vec3,
     pub target_rotation: Quat,
 }
@@ -239,6 +241,7 @@ fn receive_snapshots(
     mut commands: Commands,
     client: Res<NetClient>,
     mut crew: ResMut<CrewSkills>,
+    mut spotting: ResMut<crate::spotting::Spotting>,
     mut match_state: ResMut<crate::match_client::MatchClient>,
     mut registry: ResMut<AircraftRegistry>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -326,9 +329,13 @@ fn receive_snapshots(
             }
             Ok(ServerMessage::Crew { config }) => {
                 *crew = CrewSkills::from_text(&config);
+                spotting.apply_text(&config);
                 info!(
-                    "[net] applied server crew config: pilot tolerates {:.1} g / {:.1} g",
-                    crew.g_tolerance, crew.negative_g_tolerance
+                    "[net] applied server crew config: pilot tolerates {:.1} g / {:.1} g, spotting {:.0} m / {:.0} m",
+                    crew.g_tolerance,
+                    crew.negative_g_tolerance,
+                    spotting.detection_range,
+                    spotting.awareness_range
                 );
             }
             Ok(ServerMessage::Welcome { team, .. }) => {
@@ -392,6 +399,8 @@ fn apply_snapshot(
             if existing.id == player.id {
                 existing.target_position = position;
                 existing.target_rotation = rotation;
+                existing.name = player.name.clone();
+                existing.team = player.team;
                 found = true;
                 break;
             }
@@ -412,6 +421,8 @@ fn apply_snapshot(
                     Visibility::default(),
                     RemotePlayer {
                         id: player.id,
+                        name: player.name.clone(),
+                        team: player.team,
                         target_position: position,
                         target_rotation: rotation,
                     },

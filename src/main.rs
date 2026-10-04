@@ -17,6 +17,7 @@ mod menu;
 mod net;
 mod pilot;
 mod spawn_menu;
+mod spotting;
 mod world;
 
 use bevy::prelude::*;
@@ -64,6 +65,7 @@ fn main() {
             crosshair::CrosshairPlugin,
             pilot::PilotPlugin,
             match_client::MatchClientPlugin,
+            spotting::SpottingPlugin,
         ))
         .run();
 }

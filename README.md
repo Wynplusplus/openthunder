@@ -98,6 +98,21 @@ The `pacific_islands.map` map runs it over an island chain: the client builds
 matching island terrain (water, beaches, runways, trees) from the server's map
 name, and switches to it when you connect.
 
+### Spotting
+
+Air RB-style spotting keeps the sky from being a wall of nameplates:
+
+- Aircraft are only **drawn within 9 km** (`render_distance`); beyond that they
+  vanish from view.
+- An **enemy** gets a red marker only when *spotted*: within 7 km inside the
+  view cone (WT's "Keen Vision"), or always within 1.5 km all-round
+  ("Awareness").
+- **Friendlies** get a blue marker within 7 km; without teams everyone is
+  neutral (grey).
+
+Ranges live in `spotting.rs` and a server can tune them through its crew config
+(`render_distance`, `detection_range`, `awareness_range`, `view_cone_deg`).
+
 The server also ships its **pilot crew configuration** (`crew.conf`) to every
 client on connect, so a server operator can tune the pilot's g-tolerance for the
 whole server — see [Pilot g-tolerance and blackout](#pilot-g-tolerance-and-blackout).
@@ -324,6 +339,7 @@ src/
   crosshair.rs       fixed gun crosshair at screen centre
   pilot.rs           crew g-tolerance, blackout/redout, tunnel-vision overlay
   match_client.rs    team deathmatch state: scoreboard, kill feed, respawn
+  spotting.rs        Air RB-style spotting: render culling + aircraft markers
 ```
 
 ## Known simplifications
