@@ -125,6 +125,11 @@ pub const ACTIONS: &[ActionInfo] = &[
         label: "Fire guns",
         default_key: "Space",
     },
+    ActionInfo {
+        name: "gear",
+        label: "Landing gear",
+        default_key: "G",
+    },
 ];
 
 // Stable indices into [`ACTIONS`] / [`Keybinds::keys`], used by the game.
@@ -148,6 +153,7 @@ pub const FLAPS_UP: usize = 16;
 pub const WEP: usize = 17;
 pub const FREE_LOOK: usize = 18;
 pub const FIRE: usize = 19;
+pub const GEAR: usize = 20;
 
 /// Canonical names of every key that can be bound.
 pub const SUPPORTED_KEYS: &[&str] = &[

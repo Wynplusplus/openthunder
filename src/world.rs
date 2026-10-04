@@ -45,6 +45,26 @@ impl WorldKind {
     }
 }
 
+/// Approximate terrain height at a world position, for the ground/landing model.
+///
+/// Training is a flat field; the islands map is water with a single rounded
+/// home island (where the runway sits).
+pub(crate) fn terrain_height(kind: WorldKind, x: f32, z: f32) -> f32 {
+    match kind {
+        WorldKind::Training => 0.0,
+        WorldKind::Islands => {
+            let radius = 2600.0;
+            let r = (x * x + z * z).sqrt();
+            if r < radius {
+                let t = 1.0 - (r / radius).powi(2);
+                150.0 * t.max(0.0).sqrt()
+            } else {
+                0.0
+            }
+        }
+    }
+}
+
 /// Marks everything the world builder spawned, so it can be rebuilt.
 #[derive(Component)]
 struct WorldEntity;

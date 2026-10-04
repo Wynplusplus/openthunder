@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 
 use openthunder::keybinds::{
-    DAMAGE_ENGINE, DAMAGE_LEFT_WING, DAMAGE_TAIL, FIRE, FLAPS_DOWN, FLAPS_UP, FREE_LOOK,
+    DAMAGE_ENGINE, DAMAGE_LEFT_WING, DAMAGE_TAIL, FIRE, FLAPS_DOWN, FLAPS_UP, FREE_LOOK, GEAR,
     PITCH_DOWN, PITCH_DOWN_ALT, PITCH_UP, PITCH_UP_ALT, REPAIR, RESET, ROLL_LEFT, ROLL_RIGHT,
     THROTTLE_DOWN, THROTTLE_UP, WEP, YAW_LEFT, YAW_RIGHT, key_display,
 };
@@ -207,6 +207,14 @@ fn update_hud(
         "clear".to_string()
     };
 
+    let gear = if aircraft.gear_position > 0.95 {
+        "down"
+    } else if aircraft.gear_position < 0.05 {
+        "up"
+    } else {
+        "moving"
+    };
+
     let targets = if target_score.total > 0 {
         format!(
             "Targets {}/{} destroyed",
@@ -220,12 +228,12 @@ fn update_hud(
         "{name}   {connection}\n\
          TAS {speed:5.0} km/h   IAS {ias:5.0} km/h   Alt {alt:6.0} m\n\
          Throttle {thr:3.0}% {wep}   AoA {alpha:+5.1} deg   G {g:+.1}   Stamina {stamina:3.0}%   Pilot {pilot} (tol {tol:.1}g)\n\
-         Flaps {flaps}   Wing {wing:3.0}%   Engine {eng:3.0}%   Tail {tail:3.0}%   {status}\n\
+         Flaps {flaps}   Gear {gear}   Wing {wing:3.0}%   Engine {eng:3.0}%   Tail {tail:3.0}%   {status}\n\
          Ammo {ammo}   {guns}{hit_marker}\n\
          {targets}\n\
          \n\
          Mouse: aim   {fire_key}: fire   {pitch_up}/{pitch_down}/{pitch_up_alt}/{pitch_down_alt}: pitch   {roll_left}/{roll_right}: roll   {yaw_left}/{yaw_right}: rudder\n\
-         {throttle_up}/{throttle_down}: throttle   {wep_key}: WEP   {flaps_down}/{flaps_up}: flaps   {reset}: respawn\n\
+         {throttle_up}/{throttle_down}: throttle   {wep_key}: WEP   {flaps_down}/{flaps_up}: flaps   {gear_key}: gear   {reset}: respawn\n\
          {dmg_wing}/{dmg_engine}/{dmg_tail}: damage   {repair}: repair   {free_look}: free look   Esc: menu",
         name = aircraft.spec.name,
         connection = connection,
@@ -245,6 +253,7 @@ fn update_hud(
         pilot = pilot,
         tol = crew.g_tolerance,
         flaps = aircraft.flaps.label(),
+        gear = gear,
         wing = damage.integrity(AircraftPart::LeftWing) * 100.0,
         eng = damage.integrity(AircraftPart::Engine) * 100.0,
         tail = damage.integrity(AircraftPart::Tail) * 100.0,
@@ -262,6 +271,7 @@ fn update_hud(
         wep_key = key_display(bindings.name(WEP)),
         flaps_down = key_display(bindings.name(FLAPS_DOWN)),
         flaps_up = key_display(bindings.name(FLAPS_UP)),
+        gear_key = key_display(bindings.name(GEAR)),
         reset = key_display(bindings.name(RESET)),
         dmg_wing = key_display(bindings.name(DAMAGE_LEFT_WING)),
         dmg_engine = key_display(bindings.name(DAMAGE_ENGINE)),

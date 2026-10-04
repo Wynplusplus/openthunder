@@ -23,8 +23,8 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use openthunder::keybinds::{
-    FLAPS_DOWN, FLAPS_UP, Keybinds, PITCH_DOWN, PITCH_DOWN_ALT, PITCH_UP, PITCH_UP_ALT, RESET,
-    ROLL_LEFT, ROLL_RIGHT, THROTTLE_DOWN, THROTTLE_UP, WEP, YAW_LEFT, YAW_RIGHT,
+    FLAPS_DOWN, FLAPS_UP, GEAR, Keybinds, PITCH_DOWN, PITCH_DOWN_ALT, PITCH_UP, PITCH_UP_ALT,
+    RESET, ROLL_LEFT, ROLL_RIGHT, THROTTLE_DOWN, THROTTLE_UP, WEP, YAW_LEFT, YAW_RIGHT,
 };
 
 use crate::aircraft::{
@@ -33,6 +33,16 @@ use crate::aircraft::{
 use crate::camera::{ChaseCamera, FreeLook};
 use crate::damage::{AircraftPart, DamageModel};
 use crate::menu::GameMenu;
+use crate::world::{WorldKind, terrain_height};
+
+/// Extra zero-lift drag when the landing gear is fully extended.
+const GEAR_DRAG: f32 = 0.025;
+/// Height of the aircraft's belly above the ground with the gear retracted (m).
+const BELLY_HEIGHT: f32 = 0.7;
+/// Extra height the wheels hold the aircraft at when extended (m).
+const WHEEL_HEIGHT: f32 = 1.1;
+/// Descent rate (m/s) a landing can absorb before it starts damaging the plane.
+const HARD_LANDING_SPEED: f32 = 3.5;
 
 /// Canonical key names -> Bevy key codes. The same names are validated by the
 /// launcher against `openthunder::keybinds::SUPPORTED_KEYS`.
@@ -275,6 +285,11 @@ fn read_player_input(
         aircraft.flaps = aircraft.flaps.less();
     }
 
+    // --- Landing gear ---
+    if bindings.just_pressed(&keys, GEAR) {
+        aircraft.gear_down = !aircraft.gear_down;
+    }
+
     // --- War emergency power ---
     // Only engines that actually have it (water injection / boost), and only at
     // full throttle. Push past 100% by holding throttle-up (WT's "110%" notch)
@@ -397,16 +412,9 @@ fn aim_controls(rotation: Quat, desired_dir: Vec3, bank: f32) -> (f32, f32, f32)
     (pitch, roll, yaw)
 }
 
-/// Put the aircraft back in the air at the start position, fully repaired.
-pub(crate) fn respawn(
-    transform: &mut Transform,
-    aircraft: &mut Aircraft,
-    damage: &mut DamageModel,
-) {
-    *transform = Transform::from_translation(START_POSITION);
-    aircraft.velocity = Vec3::NEG_Z * aircraft.spec.cruise_speed;
+/// Reset the aircraft's systems (controls, WEP, pilot, ammo) and repair it.
+fn reset_systems(aircraft: &mut Aircraft, damage: &mut DamageModel) {
     aircraft.angular_velocity = Vec3::ZERO;
-    aircraft.throttle = 0.8;
     aircraft.controls = Controls::default();
     aircraft.wep = false;
     aircraft.wep_heat = 0.0;
@@ -419,6 +427,38 @@ pub(crate) fn respawn(
     aircraft.ammo = aircraft.spec.guns.iter().map(|gun| gun.ammo).collect();
     aircraft.fire_timer = vec![0.0; aircraft.spec.guns.len()];
     damage.repair_all();
+}
+
+/// Put the aircraft back in the air at the start position, fully repaired.
+pub(crate) fn respawn(
+    transform: &mut Transform,
+    aircraft: &mut Aircraft,
+    damage: &mut DamageModel,
+) {
+    reset_systems(aircraft, damage);
+    *transform = Transform::from_translation(START_POSITION);
+    aircraft.velocity = Vec3::NEG_Z * aircraft.spec.cruise_speed;
+    aircraft.throttle = 0.8;
+    aircraft.gear_down = false;
+    aircraft.gear_position = 0.0;
+    aircraft.on_ground = false;
+}
+
+/// Place the aircraft on the runway, stationary and gear down, ready to take off.
+pub(crate) fn respawn_on_runway(
+    transform: &mut Transform,
+    aircraft: &mut Aircraft,
+    damage: &mut DamageModel,
+    ground: f32,
+) {
+    reset_systems(aircraft, damage);
+    let rest = ground + BELLY_HEIGHT + WHEEL_HEIGHT;
+    *transform = Transform::from_translation(Vec3::new(0.0, rest, 0.0));
+    aircraft.velocity = Vec3::ZERO;
+    aircraft.throttle = 0.0;
+    aircraft.gear_down = true;
+    aircraft.gear_position = 1.0;
+    aircraft.on_ground = true;
 }
 
 /// Put the aircraft back in the air at the start position.
@@ -440,6 +480,7 @@ fn reset_aircraft(
 /// Integrates the equations of motion for every player-controlled aircraft.
 fn flight_dynamics(
     time: Res<Time>,
+    world: Option<Res<WorldKind>>,
     mut query: Query<(&mut Transform, &mut Aircraft, &mut DamageModel), With<PlayerControlled>>,
 ) {
     // Clamp dt so a hitch can't blow up the simulation.
@@ -450,12 +491,19 @@ fn flight_dynamics(
     let Ok((mut transform, mut aircraft, mut damage)) = query.single_mut() else {
         return;
     };
+    let world_kind = world.map(|world| *world).unwrap_or_default();
 
     let spec = aircraft.spec.clone();
     let rotation = transform.rotation;
     let forward = Aircraft::forward(rotation);
     let up = rotation * Vec3::Y;
     let right = rotation * Vec3::X;
+
+    // --- Landing gear: move toward the selected position ---
+    let gear_target = if aircraft.gear_down { 1.0 } else { 0.0 };
+    let gear_step = 0.5 * dt;
+    aircraft.gear_position += (gear_target - aircraft.gear_position).clamp(-gear_step, gear_step);
+    let gear = aircraft.gear_position;
 
     let velocity = aircraft.velocity;
     let speed = velocity.length();
@@ -527,6 +575,7 @@ fn flight_dynamics(
     let cd = spec.cd0
         + induced_drag
         + spec.cd_flap * flap
+        + GEAR_DRAG * gear
         + mach_drag
         + if destroyed { 0.6 } else { 0.0 };
     let dynamic_pressure = 0.5 * air_density * speed * speed;
@@ -548,7 +597,10 @@ fn flight_dynamics(
     let thrust = forward * (aircraft.throttle * thrust_power.min(spec.static_thrust));
 
     // --- Forces ---
-    let lift_direction = (up - forward * up.dot(forward)).normalize_or_zero();
+    // Lift is perpendicular to the relative wind (not the body axis), so a
+    // pitched-up aircraft does not pick up a spurious backward force.
+    let flow = velocity.normalize_or_zero();
+    let lift_direction = (up - flow * up.dot(flow)).normalize_or_zero();
     let drag_direction = -velocity.normalize_or_zero();
 
     let lift =
@@ -622,15 +674,53 @@ fn flight_dynamics(
         damage.apply_damage(AircraftPart::RightWing, amount);
     }
 
-    // --- Crude ground interaction: don't fall through the map ---
-    let ground_level = 0.8;
-    if transform.translation.y < ground_level {
-        transform.translation.y = ground_level;
+    // --- Ground: wheels, touchdown, rolling and take-off ---
+    let terrain = terrain_height(world_kind, transform.translation.x, transform.translation.z);
+    // The wheels hold the aircraft higher off the ground than the belly does.
+    let rest_height = terrain + BELLY_HEIGHT + WHEEL_HEIGHT * gear;
+    if transform.translation.y <= rest_height {
+        // Touchdown: a hard descent damages the airframe, and a belly landing
+        // (gear still up) hurts a lot more.
+        if !aircraft.on_ground {
+            let descent = -aircraft.velocity.y;
+            let limit = HARD_LANDING_SPEED + WHEEL_HEIGHT * gear;
+            if descent > limit {
+                let over = descent - limit;
+                let mut amount = over * over * 0.8;
+                if gear < 0.5 {
+                    amount += over * 4.0;
+                }
+                damage.apply_damage(AircraftPart::Fuselage, amount);
+                damage.apply_damage(AircraftPart::LeftWing, amount * 0.6);
+                damage.apply_damage(AircraftPart::RightWing, amount * 0.6);
+            }
+        }
+        aircraft.on_ground = true;
+        transform.translation.y = rest_height;
         if aircraft.velocity.y < 0.0 {
             aircraft.velocity.y = 0.0;
         }
-        aircraft.velocity.x *= 0.99;
-        aircraft.velocity.z *= 0.99;
+
+        // Rolling friction: the wheels roll, a bare belly scrubs speed hard.
+        let rolling = if gear > 0.5 { 0.4 } else { 2.0 };
+        let horizontal = Vec3::new(aircraft.velocity.x, 0.0, aircraft.velocity.z);
+        let ground_speed = horizontal.length();
+        if ground_speed > 0.0 {
+            let scale = (ground_speed - rolling * dt).max(0.0) / ground_speed;
+            aircraft.velocity.x *= scale;
+            aircraft.velocity.z *= scale;
+        }
+
+        // Sit on the wheels: wings level, and steer with the rudder.
+        let (yaw, pitch, _) = transform.rotation.to_euler(EulerRot::YXZ);
+        let pitch = pitch.clamp(-0.08, 0.25);
+        transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0);
+        let steer = -controls.yaw * 1.1 * (ground_speed / 45.0).clamp(0.0, 1.0) * dt;
+        transform.rotate_local_y(steer);
+        aircraft.angular_velocity.x = 0.0;
+        aircraft.angular_velocity.z = 0.0;
+    } else {
+        aircraft.on_ground = false;
     }
 }
 
@@ -1176,6 +1266,125 @@ mod tests {
         assert!(
             !app.world().get::<Aircraft>(entity).unwrap().wep,
             "the G-6 has no WEP"
+        );
+    }
+
+    #[test]
+    fn gear_toggles_with_the_key() {
+        let (mut app, entity) = input_app(0.0);
+        // A new aircraft starts with the gear up.
+        assert!(!app.world().get::<Aircraft>(entity).unwrap().gear_down);
+        press_and_update(&mut app, KeyCode::KeyG);
+        assert!(
+            app.world().get::<Aircraft>(entity).unwrap().gear_down,
+            "G should lower the gear"
+        );
+        // Release, clear the frame state, then press again to retract it.
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.release(KeyCode::KeyG);
+            keys.clear();
+            keys.press(KeyCode::KeyG);
+        }
+        app.update();
+        assert!(!app.world().get::<Aircraft>(entity).unwrap().gear_down);
+    }
+
+    #[test]
+    fn runway_start_sits_on_the_ground() {
+        let mut transform = Transform::IDENTITY;
+        let mut aircraft = Aircraft::new(corsair());
+        let mut damage = DamageModel::new(100.0);
+        respawn_on_runway(&mut transform, &mut aircraft, &mut damage, 0.0);
+
+        assert!(aircraft.gear_down && aircraft.gear_position > 0.99);
+        assert!(aircraft.on_ground);
+        assert_eq!(aircraft.velocity, Vec3::ZERO);
+        let rest = BELLY_HEIGHT + WHEEL_HEIGHT;
+        assert!((transform.translation.y - rest).abs() < 1e-3);
+    }
+
+    #[test]
+    fn aircraft_can_take_off_from_the_runway() {
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.add_systems(Update, flight_dynamics);
+
+        let mut aircraft = Aircraft::new(corsair());
+        let mut transform = Transform::IDENTITY;
+        let mut damage = DamageModel::new(100.0);
+        respawn_on_runway(&mut transform, &mut aircraft, &mut damage, 0.0);
+        aircraft.throttle = 1.0;
+        let entity = app
+            .world_mut()
+            .spawn((transform, aircraft, damage, PlayerControlled))
+            .id();
+
+        let mut lifted_off = false;
+        for i in 0..2500 {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_secs_f32(0.02));
+            // Rotate for take-off.
+            app.world_mut()
+                .get_mut::<Aircraft>(entity)
+                .unwrap()
+                .controls
+                .pitch = 0.6;
+            app.update();
+            let ac = app.world().get::<Aircraft>(entity).unwrap();
+            let y = app.world().get::<Transform>(entity).unwrap().translation.y;
+            if !ac.on_ground && y > BELLY_HEIGHT + WHEEL_HEIGHT + 2.0 {
+                lifted_off = true;
+                break;
+            }
+        }
+        assert!(lifted_off, "the aircraft should accelerate and lift off");
+    }
+
+    /// Touch down at `vertical_speed` (m/s) and return the fuselage integrity.
+    fn land_at(vertical_speed: f32) -> f32 {
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.add_systems(Update, flight_dynamics);
+
+        let mut aircraft = Aircraft::new(corsair());
+        aircraft.gear_down = true;
+        aircraft.gear_position = 1.0;
+        aircraft.velocity = Vec3::new(0.0, -vertical_speed, -70.0);
+        let rest = BELLY_HEIGHT + WHEEL_HEIGHT;
+        let entity = app
+            .world_mut()
+            .spawn((
+                // Start just touching the ground so gravity cannot build the
+                // descent rate up before touchdown.
+                Transform::from_translation(Vec3::new(0.0, rest - 0.01, 0.0)),
+                aircraft,
+                DamageModel::new(100.0),
+                PlayerControlled,
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs_f32(0.02));
+        app.update();
+        app.world()
+            .get::<DamageModel>(entity)
+            .unwrap()
+            .integrity(AircraftPart::Fuselage)
+    }
+
+    #[test]
+    fn a_gentle_landing_is_safe_and_a_hard_one_is_not() {
+        assert_eq!(
+            land_at(1.5),
+            1.0,
+            "a gentle touchdown should not damage the plane"
+        );
+        let hard = land_at(12.0);
+        assert!(
+            hard < 1.0,
+            "a hard touchdown should damage the plane (integrity {hard:.2})"
         );
     }
 }

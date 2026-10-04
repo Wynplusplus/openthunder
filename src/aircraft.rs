@@ -240,6 +240,14 @@ pub struct Aircraft {
     pub flaps: FlapSetting,
     /// Actual flap position, `0.0..=1.0` (moves toward the selected setting).
     pub flap_position: f32,
+
+    // --- Landing gear ---
+    /// Whether the gear is selected down.
+    pub gear_down: bool,
+    /// Gear position, `0.0` (up) .. `1.0` (down).
+    pub gear_position: f32,
+    /// Whether the wheels are on the ground.
+    pub on_ground: bool,
     /// Instructor pitch trim: the angle of attack held when hands-off.
     pub trim_alpha: f32,
 
@@ -284,6 +292,9 @@ impl Aircraft {
             wep_heat: 0.0,
             flaps: FlapSetting::Up,
             flap_position: 0.0,
+            gear_down: false,
+            gear_position: 0.0,
+            on_ground: false,
             trim_alpha,
             ammo,
             fire_timer,
@@ -400,7 +411,7 @@ impl Plugin for AircraftPlugin {
             .collect();
         app.insert_resource(AircraftRegistry { specs })
             .add_systems(Startup, log_aircraft_types)
-            .add_systems(Update, spin_propellers);
+            .add_systems(Update, (spin_propellers, update_gear_visual));
     }
 }
 
@@ -473,6 +484,8 @@ pub fn spawn_aircraft_model(
     let canopy = meshes.add(Sphere::new(0.55));
     let blade = meshes.add(Cuboid::new(0.10, 1.5, 0.10));
     let spinner = meshes.add(Sphere::new(0.22));
+    let strut = meshes.add(Cuboid::new(0.14, 0.9, 0.14));
+    let wheel = meshes.add(Cylinder::new(0.28, 0.18));
 
     commands.entity(root).with_children(|parent| {
         parent.spawn((
@@ -525,7 +538,51 @@ pub fn spawn_aircraft_model(
                     ));
                 }
             });
+
+        // --- Landing gear: two main legs with wheels (extend / retract) ---
+        parent
+            .spawn((Transform::default(), Visibility::default(), GearVisual))
+            .with_children(|gear| {
+                for side in [-1.0f32, 1.0] {
+                    gear.spawn((
+                        Mesh3d(strut.clone()),
+                        MeshMaterial3d(dark.clone()),
+                        Transform::from_xyz(side * 0.9, -0.7, 0.0),
+                    ));
+                    gear.spawn((
+                        Mesh3d(wheel.clone()),
+                        MeshMaterial3d(dark.clone()),
+                        Transform::from_xyz(side * 0.9, -1.35, 0.0)
+                            .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
+                    ));
+                }
+            });
     });
+}
+
+/// Marks the retractable landing-gear group of an aircraft model.
+#[derive(Component)]
+pub struct GearVisual;
+
+/// Extend or retract the gear group as the aircraft's gear position changes.
+fn update_gear_visual(
+    aircraft: Query<&Aircraft>,
+    mut gear: Query<(&ChildOf, &mut Transform, &mut Visibility), With<GearVisual>>,
+) {
+    for (child_of, mut transform, mut visibility) in &mut gear {
+        // Remote players do not network their gear, so default to down.
+        let position = aircraft
+            .get(child_of.parent())
+            .map(|aircraft| aircraft.gear_position)
+            .unwrap_or(1.0);
+        *visibility = if position < 0.1 {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
+        // Slide the legs up into the fuselage as they retract.
+        transform.translation.y = 1.2 * (1.0 - position);
+    }
 }
 
 /// Spin the propeller visual at a rate proportional to engine throttle.

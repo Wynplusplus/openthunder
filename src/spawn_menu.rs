@@ -11,9 +11,8 @@ use bevy::prelude::*;
 use openthunder::protocol::ClientMessage;
 use openthunder::settings::Settings;
 
-use crate::aircraft::{
-    Aircraft, AircraftRegistry, PlayerControlled, START_POSITION, spawn_aircraft,
-};
+use crate::aircraft::{Aircraft, AircraftRegistry, PlayerControlled, spawn_aircraft};
+use crate::damage::DamageModel;
 use crate::net::NetClient;
 
 /// True while the player is choosing a plane (no aircraft spawned yet).
@@ -102,6 +101,7 @@ fn spawn_menu_input(
     keys: Res<ButtonInput<KeyCode>>,
     registry: Res<AircraftRegistry>,
     client: Res<NetClient>,
+    world: Res<crate::world::WorldKind>,
     mut state: ResMut<SpawnState>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -133,13 +133,17 @@ fn spawn_menu_input(
 
     let spec = registry.specs[state.selected].clone();
     let mut aircraft = Aircraft::new(spec.clone());
-    aircraft.velocity = Vec3::NEG_Z * aircraft.spec.cruise_speed;
+    // Start on the runway, ready to take off.
+    let mut transform = Transform::IDENTITY;
+    let mut damage = DamageModel::new(spec.max_health);
+    let ground = crate::world::terrain_height(*world, 0.0, 0.0);
+    crate::flight::respawn_on_runway(&mut transform, &mut aircraft, &mut damage, ground);
     let entity = spawn_aircraft(
         &mut commands,
         &mut meshes,
         &mut materials,
         aircraft,
-        Transform::from_translation(START_POSITION),
+        transform,
     );
     commands.entity(entity).insert(PlayerControlled);
     info!("Spawning {}", spec.name);

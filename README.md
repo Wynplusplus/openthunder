@@ -136,6 +136,7 @@ Defaults — all of these can be changed in the launcher:
 | `W` / `S`        | Throttle up / down (hold up at 100% for WEP) |
 | `F` / `V`        | Flaps down / up (combat → takeoff → landing) |
 | `B`              | War emergency power (WEP, overheats)     |
+| `G`              | Landing gear down / up                   |
 | `R`              | Respawn in the air                       |
 | `1` / `2` / `3`  | Apply test damage: left wing / engine / tail |
 | `0`              | Repair everything                        |
@@ -215,6 +216,11 @@ for the limits and stiffening) is derived from it.
 - **Structural limits**: each aircraft has its own g limit and IAS redline;
   exceeding them damages the airframe.
 - **Control stiffening / compressibility** at high speed.
+- **Landing gear** (toggle with `G`): retractable wheels with drag when extended.
+- **Landing and take-off**: you spawn on the runway, throttle up, rotate and
+  climb away; come back with the gear down, touch down gently (a hard descent —
+  or a belly landing with the gear up — damages the airframe), roll out and stop.
+  Steering on the ground is with the rudder.
 - **G-limiter**: the instructor eases off as the wing approaches its structural
   g limit, so mouse aim alone will not normally rip the airframe.
 - **Pilot g-tolerance**: a trained pilot holds ~6.5 g; harder or longer pulls
@@ -369,7 +375,10 @@ src/
 
 - Lift acts along the body up axis (not exactly perpendicular to the airflow),
   which is fine at normal angles of attack but not at extreme ones.
-- Ground interaction is a soft clamp; there is no proper landing/crash.
+- Terrain is flat (training) or a single rounded island (islands); the ground
+  model uses an approximate height, and only the home island is landable.
+- Aircraft always sit level on the ground (no taildragger attitude) and there is
+  no wheel-level collision, just a landing surface.
 - The pilot model uses a fixed crew-skill level; there is no crew progression.
 - No audio.
 
