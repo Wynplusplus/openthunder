@@ -13,7 +13,7 @@ use std::f32::consts::PI;
 
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
-use openthunder::keybinds::FREE_LOOK;
+use openthunder::keybinds::{FREE_LOOK, ZOOM};
 
 use crate::aircraft::PlayerControlled;
 use crate::flight::Bindings;
@@ -22,6 +22,10 @@ use crate::flight::Bindings;
 const LOOK_SENSITIVITY: f32 = 0.004;
 /// Maximum look pitch (radians).
 const MAX_PITCH: f32 = 1.3;
+/// Normal vertical field of view (radians).
+const NORMAL_FOV: f32 = std::f32::consts::FRAC_PI_4;
+/// Field of view while zoomed in (radians, about 18 degrees).
+const ZOOM_FOV: f32 = 0.32;
 
 /// Marks the camera that follows the player's aircraft.
 #[derive(Component)]
@@ -106,19 +110,30 @@ fn free_look_input(
 
 fn chase_camera(
     time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
+    bindings: Res<Bindings>,
     look: Res<FreeLook>,
     target: Query<&Transform, (With<PlayerControlled>, Without<ChaseCamera>)>,
-    mut camera: Query<&mut Transform, With<ChaseCamera>>,
+    mut camera: Query<(&mut Transform, &mut Projection), With<ChaseCamera>>,
     mut rig: Local<Quat>,
+    mut zoom: Local<f32>,
 ) {
     let Ok(aircraft) = target.single() else {
         return;
     };
-    let Ok(mut camera_transform) = camera.single_mut() else {
+    let Ok((mut camera_transform, mut projection)) = camera.single_mut() else {
         return;
     };
 
     let dt = time.delta_secs();
+
+    // --- Zoom: hold the key to narrow the field of view, WT style ---
+    let want_zoom = bindings.pressed(&keys, ZOOM);
+    let target_zoom = if want_zoom { 1.0 } else { 0.0 };
+    *zoom += (target_zoom - *zoom) * (1.0 - (-10.0 * dt).exp()).clamp(0.0, 1.0);
+    if let Projection::Perspective(perspective) = &mut *projection {
+        perspective.fov = NORMAL_FOV + (ZOOM_FOV - NORMAL_FOV) * *zoom;
+    }
 
     // The camera rig is the aircraft's frame rotated by the free-look orbit, so
     // the aircraft stays put on screen while the camera circles it.
@@ -131,7 +146,9 @@ fn chase_camera(
     *rig = rig.slerp(target_rig, follow);
 
     // Constant-radius offset: behind (+Z is behind, since the nose is -Z) and up.
-    let offset = *rig * Vec3::new(0.0, 3.0, 18.0);
+    // Pull in a little while zoomed so the aircraft does not fill the view.
+    let distance = 18.0 - 5.0 * *zoom;
+    let offset = *rig * Vec3::new(0.0, 3.0, distance);
     camera_transform.translation = aircraft.translation + offset;
 
     // Look along the (free-look rotated) nose. `looking_to` guarantees the
@@ -232,6 +249,71 @@ mod tests {
             look.yaw.abs() < before,
             "orbit should ease back, was {before}, now {}",
             look.yaw.abs()
+        );
+    }
+
+    #[test]
+    fn holding_zoom_narrows_the_field_of_view() {
+        use openthunder::keybinds::Keybinds;
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default())
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<FreeLook>()
+            .insert_resource(Bindings::from_config(&Keybinds::default()))
+            .add_systems(Update, chase_camera);
+
+        app.world_mut().spawn((
+            Transform::from_translation(Vec3::new(0.0, 1000.0, 0.0)),
+            PlayerControlled,
+        ));
+        let camera = app
+            .world_mut()
+            .spawn((
+                Transform::default(),
+                Projection::Perspective(PerspectiveProjection {
+                    fov: NORMAL_FOV,
+                    ..default()
+                }),
+                ChaseCamera,
+            ))
+            .id();
+
+        let fov_of = |app: &App| match app.world().get::<Projection>(camera).unwrap() {
+            Projection::Perspective(perspective) => perspective.fov,
+            _ => unreachable!("the chase camera is a perspective camera"),
+        };
+
+        // Hold the zoom key: the field of view narrows.
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyZ);
+        for _ in 0..80 {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_secs_f32(0.05));
+            app.update();
+        }
+        let zoomed = fov_of(&app);
+        assert!(
+            zoomed < NORMAL_FOV * 0.7,
+            "zoom should narrow the fov, got {zoomed}"
+        );
+
+        // Release: it eases back out.
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::KeyZ);
+        for _ in 0..120 {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_secs_f32(0.05));
+            app.update();
+        }
+        assert!(
+            (fov_of(&app) - NORMAL_FOV).abs() < 0.05,
+            "zoom should return to normal, got {}",
+            fov_of(&app)
         );
     }
 }

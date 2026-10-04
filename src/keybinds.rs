@@ -130,6 +130,11 @@ pub const ACTIONS: &[ActionInfo] = &[
         label: "Landing gear",
         default_key: "G",
     },
+    ActionInfo {
+        name: "zoom",
+        label: "Zoom",
+        default_key: "Z",
+    },
 ];
 
 // Stable indices into [`ACTIONS`] / [`Keybinds::keys`], used by the game.
@@ -154,6 +159,7 @@ pub const WEP: usize = 17;
 pub const FREE_LOOK: usize = 18;
 pub const FIRE: usize = 19;
 pub const GEAR: usize = 20;
+pub const ZOOM: usize = 21;
 
 /// Canonical names of every key that can be bound.
 pub const SUPPORTED_KEYS: &[&str] = &[

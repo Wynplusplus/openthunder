@@ -141,6 +141,7 @@ Defaults — all of these can be changed in the launcher:
 | `1` / `2` / `3`  | Apply test damage: left wing / engine / tail |
 | `0`              | Repair everything                        |
 | `C`              | Free look (hold to orbit the camera)     |
+| `Z`              | Zoom in (hold to narrow the view)        |
 | `Space` / LMB    | Fire guns                                |
 | `Esc`            | In-game menu (Resume / Quit to Desktop)  |
 
@@ -217,6 +218,8 @@ for the limits and stiffening) is derived from it.
   exceeding them damages the airframe.
 - **Control stiffening / compressibility** at high speed.
 - **Landing gear** (toggle with `G`): retractable wheels with drag when extended.
+- **Zoom** (hold `Z`): narrows the field of view WT-style and pulls the camera
+  in, which also makes mouse aiming finer at long range.
 - **Landing and take-off**: you spawn on the runway, throttle up, rotate and
   climb away; come back with the gear down, touch down gently (a hard descent —
   or a belly landing with the gear up — damages the airframe), roll out and stop.
