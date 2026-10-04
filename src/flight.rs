@@ -256,8 +256,10 @@ fn read_player_input(
     }
 
     // --- Throttle ---
+    // Holding throttle-up past 100% is WT's WEP notch (see below).
+    let throttle_up = bindings.pressed(&keys, THROTTLE_UP);
     let mut throttle = aircraft.throttle;
-    if bindings.pressed(&keys, THROTTLE_UP) {
+    if throttle_up {
         throttle += 0.7 * dt;
     }
     if bindings.pressed(&keys, THROTTLE_DOWN) {
@@ -275,9 +277,11 @@ fn read_player_input(
 
     // --- War emergency power ---
     // Only engines that actually have it (water injection / boost), and only at
-    // full throttle — WT's "110%" notch. It builds heat and cuts out if held too
-    // long, and must cool before it re-engages.
-    let want_wep = spec.has_wep && aircraft.throttle >= 0.99 && bindings.pressed(&keys, WEP);
+    // full throttle. Push past 100% by holding throttle-up (WT's "110%" notch)
+    // or the dedicated WEP key. It builds heat and cuts out if held too long,
+    // and must cool before it re-engages.
+    let want_wep =
+        spec.has_wep && aircraft.throttle >= 0.99 && (throttle_up || bindings.pressed(&keys, WEP));
     aircraft.wep = if aircraft.wep {
         want_wep && aircraft.wep_heat < 0.999
     } else {
@@ -1125,6 +1129,19 @@ mod tests {
         assert!(
             app.world().get::<Aircraft>(entity).unwrap().wep,
             "WEP should engage at full throttle"
+        );
+
+        // Corsair at full throttle with the throttle-up key held: engages too
+        // (WT's "110%" notch).
+        let (mut app, entity) = input_app(0.0);
+        app.world_mut()
+            .get_mut::<Aircraft>(entity)
+            .unwrap()
+            .throttle = 1.0;
+        press_and_update(&mut app, KeyCode::KeyW);
+        assert!(
+            app.world().get::<Aircraft>(entity).unwrap().wep,
+            "holding throttle up at 100% should engage WEP"
         );
 
         // Corsair below full throttle: does not engage.

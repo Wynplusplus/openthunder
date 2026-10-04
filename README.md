@@ -133,7 +133,7 @@ Defaults — all of these can be changed in the launcher:
 | `Ctrl` / `Shift` | Pitch up / down (secondary bindings)     |
 | `A` / `D`        | Roll left / right (manual override)      |
 | `Q` / `E`        | Yaw left / right (rudder)                |
-| `W` / `S`        | Throttle up / down                       |
+| `W` / `S`        | Throttle up / down (hold up at 100% for WEP) |
 | `F` / `V`        | Flaps down / up (combat → takeoff → landing) |
 | `B`              | War emergency power (WEP, overheats)     |
 | `R`              | Respawn in the air                       |
@@ -207,10 +207,10 @@ for the limits and stiffening) is derived from it.
   speed limits and instructor **auto-retract** when overspeed.
 - **War emergency power (WEP)**: an extra power setting on engines that had it
   (the Corsair's water injection, the Spitfire's +25 lb boost — but not the
-  Bf 109 G-6's DB 605A). Hold `B` **at full throttle** (WT's "110%" notch) for a
-  real boost in speed and climb; it builds heat and cuts out if held too long,
-  and must cool before re-engaging. The HUD shows `WEP` / `WEP ready` /
-  `WEP needs 100% throttle`.
+  Bf 109 G-6's DB 605A). At full throttle, keep holding the **throttle-up** key
+  or hold the **WEP** key (`B`) to push past 100% — WT's "110%" notch. It builds
+  heat and cuts out if held too long, and must cool before re-engaging. The HUD
+  shows `WEP` / `WEP ready` / `WEP needs 100% throttle`.
 - **Propeller torque** roll, trimmed out by the instructor.
 - **Structural limits**: each aircraft has its own g limit and IAS redline;
   exceeding them damages the airframe.
