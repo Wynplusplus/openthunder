@@ -108,10 +108,28 @@ pub fn keycode_from_name(name: &str) -> Option<KeyCode> {
         .map(|(_, code)| *code)
 }
 
-/// Keybinds resolved to [`KeyCode`]s, ready for the input systems.
+/// A single bound input: a keyboard key or a mouse button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Binding {
+    Key(KeyCode),
+    Mouse(MouseButton),
+}
+
+/// Converts a canonical binding name (`"A"`, `"ArrowUp"`, `"MouseRight"`, ...)
+/// into a [`Binding`].
+pub fn binding_from_name(name: &str) -> Option<Binding> {
+    match name {
+        "MouseLeft" => Some(Binding::Mouse(MouseButton::Left)),
+        "MouseRight" => Some(Binding::Mouse(MouseButton::Right)),
+        "MouseMiddle" => Some(Binding::Mouse(MouseButton::Middle)),
+        other => keycode_from_name(other).map(Binding::Key),
+    }
+}
+
+/// Keybinds resolved to [`Binding`]s, ready for the input systems.
 #[derive(Resource)]
 pub struct Bindings {
-    codes: Vec<Option<KeyCode>>,
+    codes: Vec<Option<Binding>>,
     names: Vec<String>,
 }
 
@@ -121,27 +139,45 @@ impl Bindings {
             codes: config
                 .keys
                 .iter()
-                .map(|name| keycode_from_name(name))
+                .map(|name| binding_from_name(name))
                 .collect(),
             names: config.keys.clone(),
         }
     }
 
-    pub fn get(&self, index: usize) -> Option<KeyCode> {
+    pub fn get(&self, index: usize) -> Option<Binding> {
         self.codes.get(index).copied().flatten()
     }
 
-    /// True while the key bound to `index` is held.
-    pub fn pressed(&self, keys: &ButtonInput<KeyCode>, index: usize) -> bool {
-        self.get(index).is_some_and(|code| keys.pressed(code))
+    /// True while the input bound to `index` is held.
+    pub fn pressed(
+        &self,
+        keys: &ButtonInput<KeyCode>,
+        mouse: &ButtonInput<MouseButton>,
+        index: usize,
+    ) -> bool {
+        match self.get(index) {
+            Some(Binding::Key(code)) => keys.pressed(code),
+            Some(Binding::Mouse(button)) => mouse.pressed(button),
+            None => false,
+        }
     }
 
-    /// True on the frame the key bound to `index` was pressed.
-    pub fn just_pressed(&self, keys: &ButtonInput<KeyCode>, index: usize) -> bool {
-        self.get(index).is_some_and(|code| keys.just_pressed(code))
+    /// True on the frame the input bound to `index` was pressed.
+    pub fn just_pressed(
+        &self,
+        keys: &ButtonInput<KeyCode>,
+        mouse: &ButtonInput<MouseButton>,
+        index: usize,
+    ) -> bool {
+        match self.get(index) {
+            Some(Binding::Key(code)) => keys.just_pressed(code),
+            Some(Binding::Mouse(button)) => mouse.just_pressed(button),
+            None => false,
+        }
     }
 
-    /// The human-readable name of a bound key (used by the HUD).
+    /// The human-readable name of a bound input (used by the HUD).
     pub fn name(&self, index: usize) -> &str {
         self.names.get(index).map(String::as_str).unwrap_or("?")
     }
@@ -228,6 +264,7 @@ fn control_authority(ias: f32, mach: f32, spec: &AircraftSpec) -> f32 {
 fn read_player_input(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
     bindings: Res<Bindings>,
     mouse_motion: Res<AccumulatedMouseMotion>,
     mut mouse_aim: ResMut<MouseAim>,
@@ -267,26 +304,26 @@ fn read_player_input(
 
     // --- Throttle ---
     // Holding throttle-up past 100% is WT's WEP notch (see below).
-    let throttle_up = bindings.pressed(&keys, THROTTLE_UP);
+    let throttle_up = bindings.pressed(&keys, &mouse, THROTTLE_UP);
     let mut throttle = aircraft.throttle;
     if throttle_up {
         throttle += 0.7 * dt;
     }
-    if bindings.pressed(&keys, THROTTLE_DOWN) {
+    if bindings.pressed(&keys, &mouse, THROTTLE_DOWN) {
         throttle -= 0.7 * dt;
     }
     aircraft.throttle = throttle.clamp(0.0, 1.0);
 
     // --- Flaps ---
-    if bindings.just_pressed(&keys, FLAPS_DOWN) {
+    if bindings.just_pressed(&keys, &mouse, FLAPS_DOWN) {
         aircraft.flaps = aircraft.flaps.more();
     }
-    if bindings.just_pressed(&keys, FLAPS_UP) {
+    if bindings.just_pressed(&keys, &mouse, FLAPS_UP) {
         aircraft.flaps = aircraft.flaps.less();
     }
 
     // --- Landing gear ---
-    if bindings.just_pressed(&keys, GEAR) {
+    if bindings.just_pressed(&keys, &mouse, GEAR) {
         aircraft.gear_down = !aircraft.gear_down;
     }
 
@@ -295,8 +332,9 @@ fn read_player_input(
     // full throttle. Push past 100% by holding throttle-up (WT's "110%" notch)
     // or the dedicated WEP key. It builds heat and cuts out if held too long,
     // and must cool before it re-engages.
-    let want_wep =
-        spec.has_wep && aircraft.throttle >= 0.99 && (throttle_up || bindings.pressed(&keys, WEP));
+    let want_wep = spec.has_wep
+        && aircraft.throttle >= 0.99
+        && (throttle_up || bindings.pressed(&keys, &mouse, WEP));
     aircraft.wep = if aircraft.wep {
         want_wep && aircraft.wep_heat < 0.999
     } else {
@@ -307,22 +345,24 @@ fn read_player_input(
     let mut keyboard_pitch = 0.0;
     let mut keyboard_roll: f32 = 0.0;
     let mut keyboard_yaw = 0.0;
-    if bindings.pressed(&keys, PITCH_UP) || bindings.pressed(&keys, PITCH_UP_ALT) {
+    if bindings.pressed(&keys, &mouse, PITCH_UP) || bindings.pressed(&keys, &mouse, PITCH_UP_ALT) {
         keyboard_pitch += 1.0;
     }
-    if bindings.pressed(&keys, PITCH_DOWN) || bindings.pressed(&keys, PITCH_DOWN_ALT) {
+    if bindings.pressed(&keys, &mouse, PITCH_DOWN)
+        || bindings.pressed(&keys, &mouse, PITCH_DOWN_ALT)
+    {
         keyboard_pitch -= 1.0;
     }
-    if bindings.pressed(&keys, ROLL_LEFT) {
+    if bindings.pressed(&keys, &mouse, ROLL_LEFT) {
         keyboard_roll -= 1.0;
     }
-    if bindings.pressed(&keys, ROLL_RIGHT) {
+    if bindings.pressed(&keys, &mouse, ROLL_RIGHT) {
         keyboard_roll += 1.0;
     }
-    if bindings.pressed(&keys, YAW_LEFT) {
+    if bindings.pressed(&keys, &mouse, YAW_LEFT) {
         keyboard_yaw -= 1.0;
     }
-    if bindings.pressed(&keys, YAW_RIGHT) {
+    if bindings.pressed(&keys, &mouse, YAW_RIGHT) {
         keyboard_yaw += 1.0;
     }
 
@@ -464,11 +504,12 @@ pub(crate) fn respawn_on_runway(
 /// Put the aircraft back in the air at the start position.
 fn reset_aircraft(
     keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
     bindings: Res<Bindings>,
     menu: Res<GameMenu>,
     mut query: Query<(&mut Transform, &mut Aircraft, &mut DamageModel), With<PlayerControlled>>,
 ) {
-    if menu.open || !bindings.just_pressed(&keys, RESET) {
+    if menu.open || !bindings.just_pressed(&keys, &mouse, RESET) {
         return;
     }
     let Ok((mut transform, mut aircraft, mut damage)) = query.single_mut() else {
@@ -741,6 +782,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<AccumulatedMouseMotion>()
             .init_resource::<MouseAim>()
             .init_resource::<crate::menu::GameMenu>()
@@ -1250,6 +1292,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<AccumulatedMouseMotion>()
             .init_resource::<MouseAim>()
             .init_resource::<crate::menu::GameMenu>()

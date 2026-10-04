@@ -133,7 +133,7 @@ pub const ACTIONS: &[ActionInfo] = &[
     ActionInfo {
         name: "zoom",
         label: "Zoom",
-        default_key: "Z",
+        default_key: "MouseRight",
     },
 ];
 
@@ -214,6 +214,9 @@ pub const SUPPORTED_KEYS: &[&str] = &[
     "ControlRight",
     "AltLeft",
     "AltRight",
+    "MouseLeft",
+    "MouseRight",
+    "MouseMiddle",
 ];
 
 /// Returns true if `key` is a recognised canonical key name.
@@ -232,6 +235,9 @@ pub fn key_display(name: &str) -> &str {
         "ArrowLeft" => "Left",
         "ArrowRight" => "Right",
         "Escape" => "Esc",
+        "MouseLeft" => "LMB",
+        "MouseRight" => "RMB",
+        "MouseMiddle" => "MMB",
         other => other,
     }
 }
@@ -377,5 +383,16 @@ mod tests {
         assert_eq!(key_display("ShiftLeft"), "Shift");
         assert_eq!(key_display("ArrowUp"), "Up");
         assert_eq!(key_display("A"), "A");
+        assert_eq!(key_display("MouseRight"), "RMB");
+        assert_eq!(key_display("MouseLeft"), "LMB");
+    }
+
+    #[test]
+    fn zoom_defaults_to_the_right_mouse_button() {
+        let keybinds = Keybinds::default();
+        assert_eq!(keybinds.get(ZOOM), "MouseRight");
+        assert!(is_supported("MouseRight"), "mouse buttons are bindable");
+        assert!(is_supported("MouseLeft"));
+        assert!(is_supported("MouseMiddle"));
     }
 }

@@ -149,6 +149,7 @@ impl Plugin for DamagePlugin {
 /// Replace/augment this with real projectile collision later.
 fn debug_damage_input(
     keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
     bindings: Res<Bindings>,
     menu: Res<crate::menu::GameMenu>,
     mut query: Query<&mut DamageModel, With<PlayerControlled>>,
@@ -160,16 +161,16 @@ fn debug_damage_input(
         return;
     };
 
-    if bindings.just_pressed(&keys, DAMAGE_LEFT_WING) {
+    if bindings.just_pressed(&keys, &mouse, DAMAGE_LEFT_WING) {
         damage.apply_damage(AircraftPart::LeftWing, 35.0);
     }
-    if bindings.just_pressed(&keys, DAMAGE_ENGINE) {
+    if bindings.just_pressed(&keys, &mouse, DAMAGE_ENGINE) {
         damage.apply_damage(AircraftPart::Engine, 35.0);
     }
-    if bindings.just_pressed(&keys, DAMAGE_TAIL) {
+    if bindings.just_pressed(&keys, &mouse, DAMAGE_TAIL) {
         damage.apply_damage(AircraftPart::Tail, 35.0);
     }
-    if bindings.just_pressed(&keys, REPAIR) {
+    if bindings.just_pressed(&keys, &mouse, REPAIR) {
         damage.repair_all();
     }
 }

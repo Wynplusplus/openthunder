@@ -83,11 +83,12 @@ fn spawn_camera(mut commands: Commands) {
 fn free_look_input(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
     bindings: Res<Bindings>,
     mouse_motion: Res<AccumulatedMouseMotion>,
     mut look: ResMut<FreeLook>,
 ) {
-    look.active = bindings.pressed(&keys, FREE_LOOK);
+    look.active = bindings.pressed(&keys, &mouse, FREE_LOOK);
 
     if look.active {
         let delta = mouse_motion.delta;
@@ -111,6 +112,7 @@ fn free_look_input(
 fn chase_camera(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
     bindings: Res<Bindings>,
     look: Res<FreeLook>,
     target: Query<&Transform, (With<PlayerControlled>, Without<ChaseCamera>)>,
@@ -128,7 +130,7 @@ fn chase_camera(
     let dt = time.delta_secs();
 
     // --- Zoom: hold the key to narrow the field of view, WT style ---
-    let want_zoom = bindings.pressed(&keys, ZOOM);
+    let want_zoom = bindings.pressed(&keys, &mouse, ZOOM);
     let target_zoom = if want_zoom { 1.0 } else { 0.0 };
     *zoom += (target_zoom - *zoom) * (1.0 - (-10.0 * dt).exp()).clamp(0.0, 1.0);
     if let Projection::Perspective(perspective) = &mut *projection {
@@ -209,6 +211,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<AccumulatedMouseMotion>()
             .init_resource::<FreeLook>()
             .insert_resource(Bindings::from_config(&Keybinds::default()))
@@ -259,6 +262,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(Time::<()>::default())
             .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<FreeLook>()
             .insert_resource(Bindings::from_config(&Keybinds::default()))
             .add_systems(Update, chase_camera);
@@ -284,10 +288,10 @@ mod tests {
             _ => unreachable!("the chase camera is a perspective camera"),
         };
 
-        // Hold the zoom key: the field of view narrows.
+        // Hold the zoom button: the field of view narrows.
         app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .press(KeyCode::KeyZ);
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Right);
         for _ in 0..80 {
             app.world_mut()
                 .resource_mut::<Time>()
@@ -302,8 +306,8 @@ mod tests {
 
         // Release: it eases back out.
         app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .release(KeyCode::KeyZ);
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .release(MouseButton::Right);
         for _ in 0..120 {
             app.world_mut()
                 .resource_mut::<Time>()

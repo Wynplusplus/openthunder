@@ -122,7 +122,8 @@ fn fire_guns(
         *timer = (*timer - dt).max(0.0);
     }
 
-    let firing = !menu.open && (mouse.pressed(MouseButton::Left) || bindings.pressed(&keys, FIRE));
+    let firing =
+        !menu.open && (mouse.pressed(MouseButton::Left) || bindings.pressed(&keys, &mouse, FIRE));
     if !firing {
         return;
     }
