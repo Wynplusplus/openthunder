@@ -12,6 +12,8 @@
 
 use bevy::prelude::*;
 
+use openthunder::plane_config;
+use openthunder::plane_config::PlaneConfig;
 use openthunder::planes;
 use openthunder::settings::Settings;
 
@@ -20,7 +22,7 @@ use crate::damage::DamageModel;
 /// A gun group: one or more muzzles firing the same round.
 #[derive(Clone, Debug)]
 pub struct GunSpec {
-    pub name: &'static str,
+    pub name: String,
     pub caliber_mm: f32,
     /// Rounds per second, per muzzle.
     pub rounds_per_second: f32,
@@ -41,7 +43,7 @@ pub struct GunSpec {
 /// Units are SI unless noted: metres, kilograms, newtons, watts, seconds, radians.
 #[derive(Clone, Debug)]
 pub struct AircraftSpec {
-    pub name: &'static str,
+    pub name: String,
 
     // --- Mass & geometry ---
     /// Loaded mass in kg.
@@ -129,8 +131,14 @@ pub struct AircraftSpec {
     /// Offensive guns.
     pub guns: Vec<GunSpec>,
 
-    // --- Looks ---
+    // --- Looks / model ---
     pub body_color: Color,
+    /// Fuselage length (m).
+    pub length: f32,
+    /// Wing chord (m).
+    pub wing_chord: f32,
+    /// Tailplane span (m).
+    pub tail_span: f32,
 }
 
 /// Registry of every aircraft type the game knows about.
@@ -146,8 +154,8 @@ impl AircraftRegistry {
         self.specs.iter().find(|spec| spec.name == name)
     }
 
-    pub fn names(&self) -> Vec<&'static str> {
-        self.specs.iter().map(|spec| spec.name).collect()
+    pub fn names(&self) -> Vec<&str> {
+        self.specs.iter().map(|spec| spec.name.as_str()).collect()
     }
 }
 
@@ -297,219 +305,74 @@ pub struct Propeller {
 /// Where a freshly spawned aircraft appears.
 pub const START_POSITION: Vec3 = Vec3::new(0.0, 1000.0, 0.0);
 
-/// The aircraft type that ships with the prototype.
-///
-/// Figures are taken from the F4U-4's real data sheet (R-2800-18W, ~2450 hp with
-/// WEP, ~711 km/h at 9,000 m, ~18 m/s climb, +11/-4 g, 885 km/h IAS redline).
-pub fn f4u_4_corsair() -> AircraftSpec {
-    AircraftSpec {
-        name: "F4U-4 Corsair",
-
-        mass: 6_000.0,
-        wing_area: 29.2,
-        wing_span: 12.5,
-
-        // R-2800-18W: ~2200 hp military, ~2450 hp WEP.
-        max_power: 1_640_000.0,
-        static_thrust: 18_000.0,
-        prop_efficiency: 0.82,
-        wep_multiplier: 1.15,
-        critical_altitude: 7_000.0,
-        altitude_power_falloff: 6_000.0,
-
-        cl_slope: 4.5,
-        cl_max: 1.4,
-        stall_aoa: 0.28, // ~16 degrees
-        cd0: 0.025,
-        oswald: 0.80,
-        cl_flap: 0.5,
-        cd_flap: 0.08,
-
-        // Chosen so that lift balances weight near the cruise speed.
-        trim_alpha: 0.042, // ~2.4 degrees
-        pitch_rate: 1.1,
-        yaw_rate: 0.5,
-        roll_rate: 3.0, // the Corsair is a fast roller
-        pitch_stability: 2.2,
-        yaw_stability: 3.0,
-        control_ref_speed: 120.0,
-        responsiveness: 6.0,
-        pitch_damping: 0.0,
-        yaw_damping: 0.0,
-        roll_damping: 2.0,
-        cruise_speed: 150.0,
-
-        // Control stiffening above ~576 km/h IAS, worst near the 885 km/h redline.
-        stiffening_onset_ias: 160.0,
-        stiffening_mach: 0.78,
-        max_ias: 246.0,
-        g_limit: 11.0,
-        prop_torque: 0.35,
-        flap_speed_limits: [388.0 / 3.6, 299.0 / 3.6, 253.0 / 3.6],
-
-        max_health: 100.0,
-
-        guns: vec![GunSpec {
-            name: "M2 Browning",
-            caliber_mm: 12.7,
-            rounds_per_second: 12.5,
-            muzzle_velocity: 870.0,
-            damage: 3.0,
-            spread: 0.0035,
-            muzzles: vec![
-                Vec3::new(-1.9, -0.05, -0.9),
-                Vec3::new(-2.7, -0.05, -0.9),
-                Vec3::new(-3.5, -0.05, -0.9),
-                Vec3::new(1.9, -0.05, -0.9),
-                Vec3::new(2.7, -0.05, -0.9),
-                Vec3::new(3.5, -0.05, -0.9),
-            ],
-            ammo: 2350,
-        }],
-
-        body_color: Color::srgb(0.13, 0.19, 0.42), // US Navy dark blue
-    }
-}
-
-/// Messerschmitt Bf 109 G-6. Data sheet: DB-605AM, ~669 km/h at 5,500 m,
-/// ~19.6 m/s climb, 20 s turn, +13/-6 g, 790 km/h IAS redline.
-pub fn bf109_g6() -> AircraftSpec {
-    AircraftSpec {
-        name: "Bf 109 G-6",
-
-        mass: 3_150.0,
-        wing_area: 16.1,
-        wing_span: 9.9,
-
-        max_power: 1_100_000.0,
-        static_thrust: 13_000.0,
-        prop_efficiency: 0.80,
-        wep_multiplier: 1.12, // MW-50
-        critical_altitude: 5_800.0,
-        altitude_power_falloff: 5_000.0,
-
-        cl_slope: 4.5,
-        cl_max: 1.4,
-        stall_aoa: 0.28,
-        cd0: 0.027,
-        oswald: 0.80,
-        cl_flap: 0.5,
-        cd_flap: 0.08,
-
-        trim_alpha: 0.035,
-        pitch_rate: 1.2,
-        yaw_rate: 0.5,
-        roll_rate: 2.5,
-        pitch_stability: 2.2,
-        yaw_stability: 3.0,
-        control_ref_speed: 120.0,
-        responsiveness: 6.0,
-        pitch_damping: 0.0,
-        yaw_damping: 0.0,
-        roll_damping: 2.0,
-        cruise_speed: 150.0,
-
-        stiffening_onset_ias: 150.0,
-        stiffening_mach: 0.78,
-        max_ias: 790.0 / 3.6,
-        g_limit: 13.0,
-        prop_torque: 0.4,
-        flap_speed_limits: [438.0 / 3.6, 409.0 / 3.6, 260.0 / 3.6],
-
-        max_health: 100.0,
-
-        guns: vec![
-            GunSpec {
-                name: "MG 151/20",
-                caliber_mm: 20.0,
-                rounds_per_second: 11.7,
-                muzzle_velocity: 800.0,
-                damage: 12.0,
-                spread: 0.003,
-                muzzles: vec![Vec3::new(0.0, -0.05, -4.15)],
-                ammo: 200,
-            },
-            GunSpec {
-                name: "MG 131",
-                caliber_mm: 13.0,
-                rounds_per_second: 15.0,
-                muzzle_velocity: 800.0,
-                damage: 5.0,
-                spread: 0.003,
-                muzzles: vec![Vec3::new(-0.4, 0.35, -3.4), Vec3::new(0.4, 0.35, -3.4)],
-                ammo: 600,
-            },
-        ],
-
-        body_color: Color::srgb(0.44, 0.46, 0.43), // Luftwaffe grey
-    }
-}
-
-/// Supermarine Spitfire F Mk IXc. Data sheet: Merlin-61, ~642 km/h at 8,537 m,
-/// ~18.9 m/s climb, 17.2 s turn, +10/-5 g, 774 km/h IAS redline.
-pub fn spitfire_mk9() -> AircraftSpec {
-    AircraftSpec {
-        name: "Spitfire F Mk IXc",
-
-        mass: 3_400.0,
-        wing_area: 22.48,
-        wing_span: 11.23,
-
-        max_power: 1_167_000.0,
-        static_thrust: 13_000.0,
-        prop_efficiency: 0.82,
-        wep_multiplier: 1.15,
-        critical_altitude: 6_500.0,
-        altitude_power_falloff: 6_000.0,
-
-        cl_slope: 4.5,
-        cl_max: 1.5, // elliptical wing
-        stall_aoa: 0.28,
-        cd0: 0.025,
-        oswald: 0.85, // elliptical wing -> high span efficiency
-        cl_flap: 0.55,
-        cd_flap: 0.09,
-
-        trim_alpha: 0.029,
-        pitch_rate: 1.3,
-        yaw_rate: 0.55,
-        roll_rate: 2.6,
-        pitch_stability: 2.2,
-        yaw_stability: 3.0,
-        control_ref_speed: 115.0,
-        responsiveness: 6.5,
-        pitch_damping: 0.0,
-        yaw_damping: 0.0,
-        roll_damping: 2.0,
-        cruise_speed: 145.0,
-
-        stiffening_onset_ias: 145.0,
-        stiffening_mach: 0.80,
-        max_ias: 774.0 / 3.6,
-        g_limit: 10.0,
-        prop_torque: 0.3,
-        // The Mk IX had a single flap position; use the same limit for all.
-        flap_speed_limits: [260.0 / 3.6, 260.0 / 3.6, 260.0 / 3.6],
-
-        max_health: 100.0,
-
-        guns: vec![GunSpec {
-            name: "Hispano Mk II",
-            caliber_mm: 20.0,
-            rounds_per_second: 10.0,
-            muzzle_velocity: 880.0,
-            damage: 12.0,
-            spread: 0.003,
-            muzzles: vec![
-                Vec3::new(-2.9, -0.05, -1.0),
-                Vec3::new(-2.1, -0.05, -1.0),
-                Vec3::new(2.9, -0.05, -1.0),
-                Vec3::new(2.1, -0.05, -1.0),
-            ],
-            ammo: 480,
-        }],
-
-        body_color: Color::srgb(0.24, 0.30, 0.20), // RAF dark green
+/// Builds a runtime [`AircraftSpec`] from a plane config — either one of the
+/// built-in defaults or one received from a server.
+impl AircraftSpec {
+    pub fn from_config(config: &PlaneConfig) -> Self {
+        Self {
+            name: config.name.clone(),
+            mass: config.mass,
+            wing_area: config.wing_area,
+            wing_span: config.wing_span,
+            max_power: config.max_power,
+            static_thrust: config.static_thrust,
+            prop_efficiency: config.prop_efficiency,
+            wep_multiplier: config.wep_multiplier,
+            critical_altitude: config.critical_altitude,
+            altitude_power_falloff: config.altitude_power_falloff,
+            cl_slope: config.cl_slope,
+            cl_max: config.cl_max,
+            stall_aoa: config.stall_aoa,
+            cd0: config.cd0,
+            oswald: config.oswald,
+            cl_flap: config.cl_flap,
+            cd_flap: config.cd_flap,
+            trim_alpha: config.trim_alpha,
+            pitch_rate: config.pitch_rate,
+            yaw_rate: config.yaw_rate,
+            roll_rate: config.roll_rate,
+            pitch_stability: config.pitch_stability,
+            yaw_stability: config.yaw_stability,
+            control_ref_speed: config.control_ref_speed,
+            responsiveness: config.responsiveness,
+            pitch_damping: config.pitch_damping,
+            yaw_damping: config.yaw_damping,
+            roll_damping: config.roll_damping,
+            cruise_speed: config.cruise_speed,
+            stiffening_onset_ias: config.stiffening_onset_ias,
+            stiffening_mach: config.stiffening_mach,
+            max_ias: config.max_ias,
+            g_limit: config.g_limit,
+            prop_torque: config.prop_torque,
+            flap_speed_limits: config.flap_speed_limits,
+            max_health: config.max_health,
+            guns: config
+                .guns
+                .iter()
+                .map(|gun| GunSpec {
+                    name: gun.name.clone(),
+                    caliber_mm: gun.caliber_mm,
+                    rounds_per_second: gun.rounds_per_second,
+                    muzzle_velocity: gun.muzzle_velocity,
+                    damage: gun.damage,
+                    spread: gun.spread,
+                    muzzles: gun
+                        .muzzles
+                        .iter()
+                        .map(|muzzle| Vec3::new(muzzle[0], muzzle[1], muzzle[2]))
+                        .collect(),
+                    ammo: gun.ammo,
+                })
+                .collect(),
+            body_color: Color::srgb(
+                config.body_color[0],
+                config.body_color[1],
+                config.body_color[2],
+            ),
+            length: config.length,
+            wing_chord: config.wing_chord,
+            tail_span: config.tail_span,
+        }
     }
 }
 
@@ -517,12 +380,14 @@ pub struct AircraftPlugin;
 
 impl Plugin for AircraftPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(AircraftRegistry {
-            // Add new aircraft types here (and to `openthunder::planes::PLANES`).
-            specs: vec![f4u_4_corsair(), bf109_g6(), spitfire_mk9()],
-        })
-        .add_systems(Startup, (log_aircraft_types, spawn_player_aircraft))
-        .add_systems(Update, spin_propellers);
+        // Built-in planes; replaced by the server's planes when connected.
+        let specs = plane_config::default_planes()
+            .iter()
+            .map(AircraftSpec::from_config)
+            .collect();
+        app.insert_resource(AircraftRegistry { specs })
+            .add_systems(Startup, (log_aircraft_types, spawn_player_aircraft))
+            .add_systems(Update, spin_propellers);
     }
 }
 
@@ -625,10 +490,11 @@ pub fn spawn_aircraft_model(
         ..default()
     });
 
-    // Shared meshes, sized from the spec.
-    let fuselage = meshes.add(Cuboid::new(1.1, 1.1, 8.0));
-    let wing = meshes.add(Cuboid::new(spec.wing_span, 0.22, 2.0));
-    let tailplane = meshes.add(Cuboid::new(3.4, 0.18, 1.0));
+    // Shared meshes, sized from the plane's model config.
+    let half_length = (spec.length * 0.5).max(1.0);
+    let fuselage = meshes.add(Cuboid::new(1.1, 1.1, spec.length.max(2.0)));
+    let wing = meshes.add(Cuboid::new(spec.wing_span, 0.22, spec.wing_chord.max(0.5)));
+    let tailplane = meshes.add(Cuboid::new(spec.tail_span.max(1.0), 0.18, 1.0));
     let fin = meshes.add(Cuboid::new(0.18, 1.4, 1.2));
     let canopy = meshes.add(Sphere::new(0.55));
     let blade = meshes.add(Cuboid::new(0.10, 1.5, 0.10));
@@ -648,21 +514,21 @@ pub fn spawn_aircraft_model(
         parent.spawn((
             Mesh3d(tailplane),
             MeshMaterial3d(body.clone()),
-            Transform::from_xyz(0.0, 0.3, 3.5),
+            Transform::from_xyz(0.0, 0.3, half_length - 0.8),
         ));
         parent.spawn((
             Mesh3d(fin),
             MeshMaterial3d(body.clone()),
-            Transform::from_xyz(0.0, 0.95, 3.7),
+            Transform::from_xyz(0.0, 0.95, half_length - 0.6),
         ));
         parent.spawn((
             Mesh3d(canopy),
             MeshMaterial3d(glass),
-            Transform::from_xyz(0.0, 0.7, -1.4),
+            Transform::from_xyz(0.0, 0.7, -half_length * 0.35),
         ));
         parent
             .spawn((
-                Transform::from_xyz(0.0, 0.0, -4.2),
+                Transform::from_xyz(0.0, 0.0, -(half_length + 0.2)),
                 Visibility::default(),
                 Propeller { angle: 0.0 },
             ))
@@ -713,7 +579,10 @@ mod tests {
     /// and vice versa.
     #[test]
     fn registry_matches_plane_list() {
-        let specs = vec![f4u_4_corsair(), bf109_g6(), spitfire_mk9()];
+        let specs: Vec<AircraftSpec> = plane_config::default_planes()
+            .iter()
+            .map(AircraftSpec::from_config)
+            .collect();
         let registry = AircraftRegistry {
             specs: specs.clone(),
         };
@@ -730,11 +599,13 @@ mod tests {
     /// Sanity-check that each aircraft's numbers are physically reasonable.
     #[test]
     fn aircraft_specs_are_sane() {
-        for spec in [f4u_4_corsair(), bf109_g6(), spitfire_mk9()] {
+        for config in plane_config::default_planes() {
+            let spec = AircraftSpec::from_config(&config);
             assert!(spec.mass > 2_000.0 && spec.mass < 8_000.0, "{}", spec.name);
             assert!(spec.max_power > 500_000.0, "{}", spec.name);
             assert!(spec.g_limit >= 8.0, "{}", spec.name);
             assert!(spec.max_ias > 150.0, "{}", spec.name);
+            assert!(!spec.guns.is_empty(), "{}", spec.name);
             assert!(
                 spec.flap_speed_limits[0] >= spec.flap_speed_limits[1]
                     && spec.flap_speed_limits[1] >= spec.flap_speed_limits[2],

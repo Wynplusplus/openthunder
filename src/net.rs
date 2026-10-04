@@ -14,11 +14,14 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 
 use bevy::prelude::*;
+use openthunder::plane_config::PlaneConfig;
 use openthunder::planes;
 use openthunder::protocol::{ClientMessage, PlayerSnapshot, ServerMessage};
 use openthunder::settings::Settings;
 
-use crate::aircraft::{Aircraft, AircraftRegistry, PlayerControlled, spawn_aircraft_model};
+use crate::aircraft::{
+    Aircraft, AircraftRegistry, AircraftSpec, PlayerControlled, spawn_aircraft_model,
+};
 use crate::damage::{AircraftPart, DamageModel};
 
 /// How often the local state is sent to the server.
@@ -231,11 +234,12 @@ fn send_local_state(
 fn receive_snapshots(
     mut commands: Commands,
     client: Res<NetClient>,
-    registry: Res<AircraftRegistry>,
+    mut registry: ResMut<AircraftRegistry>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut remote: Query<(Entity, &mut RemotePlayer, &mut DamageModel), Without<PlayerControlled>>,
     mut local: Query<&mut DamageModel, (With<PlayerControlled>, Without<RemotePlayer>)>,
+    mut player: Query<&mut Aircraft, (With<PlayerControlled>, Without<RemotePlayer>)>,
 ) {
     let Some(incoming) = &client.incoming else {
         return;
@@ -283,6 +287,30 @@ fn receive_snapshots(
                         }
                     }
                 }
+            }
+            Ok(ServerMessage::Planes { planes }) => {
+                let specs: Vec<AircraftSpec> = planes
+                    .iter()
+                    .map(|(id, text)| AircraftSpec::from_config(&PlaneConfig::parse(id, text)))
+                    .collect();
+                info!(
+                    "[net] loaded {} planes from server: {}",
+                    specs.len(),
+                    specs
+                        .iter()
+                        .map(|spec| spec.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                // Adopt the server's version of our own aircraft, if it has one.
+                if let Ok(mut aircraft) = player.single_mut() {
+                    if let Some(spec) = specs.iter().find(|spec| spec.name == aircraft.spec.name) {
+                        aircraft.ammo = spec.guns.iter().map(|gun| gun.ammo).collect();
+                        aircraft.fire_timer = vec![0.0; spec.guns.len()];
+                        aircraft.spec = spec.clone();
+                    }
+                }
+                registry.specs = specs;
             }
             Ok(_) => {}
             Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,

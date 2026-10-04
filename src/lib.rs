@@ -5,6 +5,7 @@
 //! have to depend on Bevy.
 
 pub mod keybinds;
+pub mod plane_config;
 pub mod planes;
 pub mod protocol;
 pub mod servers;

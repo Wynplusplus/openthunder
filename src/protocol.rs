@@ -58,6 +58,9 @@ pub enum ServerMessage {
         map: String,
         gamemode: String,
     },
+    /// The planes the server has, as `(id, plane.conf text)` pairs. Sent right
+    /// after [`ServerMessage::Welcome`] so clients can load every plane in use.
+    Planes { planes: Vec<(String, String)> },
     /// The full set of players, sent every tick.
     Snapshot { players: Vec<PlayerSnapshot> },
     /// A player disconnected.
@@ -85,6 +88,41 @@ impl core::fmt::Display for ProtocolError {
 /// Names/plane ids may not contain the field separators.
 pub fn sanitize_field(value: &str) -> String {
     value.replace(['\t', '\n', '\r'], " ")
+}
+
+/// Escape a multi-line config so it fits in a single tab-separated field.
+pub fn escape_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => {}
+            '\t' => out.push_str("\\t"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// Reverse of [`escape_text`].
+pub fn unescape_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('\\') => out.push('\\'),
+            Some(other) => out.push(other),
+            None => {}
+        }
+    }
+    out
 }
 
 fn fmt3(value: f32) -> String {
@@ -215,6 +253,16 @@ impl ServerMessage {
                 sanitize_field(map),
                 sanitize_field(gamemode)
             ),
+            ServerMessage::Planes { planes } => {
+                let mut out = format!("PLANES\t{}", planes.len());
+                for (id, text) in planes {
+                    out.push('\t');
+                    out.push_str(&sanitize_field(id));
+                    out.push('\t');
+                    out.push_str(&escape_text(text));
+                }
+                out
+            }
             ServerMessage::Snapshot { players } => {
                 let mut out = format!("SNAPSHOT\t{}", players.len());
                 for player in players {
@@ -259,6 +307,22 @@ impl ServerMessage {
                     map: fields[2].to_string(),
                     gamemode: fields[3].to_string(),
                 })
+            }
+            Some("PLANES") => {
+                if fields.len() < 2 {
+                    return Err(ProtocolError("PLANES wants a count".into()));
+                }
+                let count = parse_u64(fields[1])? as usize;
+                let mut planes = Vec::with_capacity(count);
+                let mut index = 2;
+                for _ in 0..count {
+                    if fields.len() < index + 2 {
+                        return Err(ProtocolError("PLANES truncated".into()));
+                    }
+                    planes.push((fields[index].to_string(), unescape_text(fields[index + 1])));
+                    index += 2;
+                }
+                Ok(ServerMessage::Planes { planes })
             }
             Some("SNAPSHOT") => {
                 if fields.len() < 2 {
@@ -376,6 +440,18 @@ mod tests {
             target: 5,
             section: 2,
             damage: 12.0,
+        });
+        round_trip_server(ServerMessage::Planes {
+            planes: vec![
+                (
+                    "f4u-4-corsair".into(),
+                    "name = F4U-4 Corsair\nmass = 6000\n".into(),
+                ),
+                (
+                    "bf-109-g6".into(),
+                    "name = Bf 109 G-6\n[gun 0]\nname = MG 151\n".into(),
+                ),
+            ],
         });
         round_trip_server(ServerMessage::Error {
             reason: "server full".into(),

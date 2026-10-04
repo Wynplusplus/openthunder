@@ -600,8 +600,13 @@ fn flight_dynamics(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aircraft::f4u_4_corsair;
+
     use openthunder::keybinds::Keybinds;
+
+    /// The Corsair, built from the built-in default config.
+    fn corsair() -> AircraftSpec {
+        AircraftSpec::from_config(&openthunder::plane_config::default_planes()[0])
+    }
 
     /// Headless app containing just the input system and one aircraft, banked by
     /// `bank_radians` to the right.
@@ -620,7 +625,7 @@ mod tests {
             .world_mut()
             .spawn((
                 Transform::from_rotation(Quat::from_rotation_z(-bank_radians)),
-                Aircraft::new(f4u_4_corsair()),
+                Aircraft::new(corsair()),
                 PlayerControlled,
             ))
             .id();
@@ -706,7 +711,7 @@ mod tests {
 
     #[test]
     fn engine_makes_full_power_below_critical_altitude() {
-        let spec = f4u_4_corsair();
+        let spec = corsair();
         assert!((engine_power_factor(0.0, &spec) - 1.0).abs() < 1e-6);
         assert!((engine_power_factor(6_000.0, &spec) - 1.0).abs() < 1e-6);
         let high = engine_power_factor(9_000.0, &spec);
@@ -718,7 +723,7 @@ mod tests {
 
     #[test]
     fn controls_stiffen_at_high_speed() {
-        let spec = f4u_4_corsair();
+        let spec = corsair();
         let cruise = control_authority(120.0, 0.35, &spec);
         let redline = control_authority(spec.max_ias, 0.80, &spec);
         assert!(cruise > 0.9, "cruise authority {cruise}");
@@ -728,13 +733,13 @@ mod tests {
 
     #[test]
     fn controls_are_mushy_when_slow() {
-        let spec = f4u_4_corsair();
+        let spec = corsair();
         assert!(control_authority(30.0, 0.1, &spec) < 0.4);
     }
 
     #[test]
     fn propeller_torque_fades_with_speed() {
-        let spec = f4u_4_corsair();
+        let spec = corsair();
         let slow = prop_torque(spec.prop_torque, 1.0, false, spec.wep_multiplier, 20.0);
         let fast = prop_torque(spec.prop_torque, 1.0, false, spec.wep_multiplier, 200.0);
         assert!(slow > 0.0);
@@ -748,7 +753,7 @@ mod tests {
 
     #[test]
     fn flap_limits_are_ordered_combat_takeoff_landing() {
-        let spec = f4u_4_corsair();
+        let spec = corsair();
         assert!(spec.cl_flap > 0.0 && spec.cd_flap > 0.0);
         assert!(spec.flap_speed_limits[0] > spec.flap_speed_limits[1]);
         assert!(spec.flap_speed_limits[1] > spec.flap_speed_limits[2]);

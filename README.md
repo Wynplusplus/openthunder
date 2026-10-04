@@ -230,20 +230,19 @@ Real weapons just need to call `DamageModel::apply_damage(part, amount)`.
 
 ## Adding a new aircraft
 
-The whole point of the structure is that a new plane is *just data*.
+A plane is **data**. The built-in planes are defined in
+`openthunder::plane_config` (`src/plane_config.rs`), using the same `key = value`
++ `[gun N]` format the server uses.
 
-1. Add a function in `src/aircraft.rs` returning an `AircraftSpec`
-   (copy `bf109_g6()` and change the numbers).
-2. Register it in `AircraftPlugin`:
+- **On a server**, a plane is just `planes/<id>/plane.conf`. The client downloads
+  every plane the server has when it connects, so **new server planes need no
+  client rebuild**. See the server repo's README.
+- **Built-in / single-player**: edit `default_planes()` in `src/plane_config.rs`
+  (and keep the server's matching `plane.conf` in sync). The launcher's list
+  lives in `src/planes.rs`; a unit test keeps the two in sync.
 
-   ```rust
-   specs: vec![f4u_4_corsair(), bf109_g6(), spitfire_mk9(), my_new_plane()],
-   ```
-3. Add it to `openthunder::planes::PLANES` (in `src/planes.rs`) so the launcher
-   can offer it. A unit test fails if the two lists drift apart.
-
-The visual model is generated from the spec (wing span, colour, …), so there is
-no per-plane rendering code to write.
+The visual model is generated from the plane's model parameters (length, wing
+chord, tail span, colour), so there is no per-plane rendering code to write.
 
 ## Project layout
 
@@ -253,11 +252,12 @@ src/
   lib.rs             shared library (used by the game and the launcher)
   keybinds.rs        keybind config: defaults, load/save, supported keys
   planes.rs          the list of aircraft offered by the launcher
+  plane_config.rs    plane definitions (flight model + model + guns)
   servers.rs         the server list shown by the launcher
   settings.rs        player settings (aircraft, server, display, name)
   protocol.rs        wire protocol (shared verbatim with the server repo)
   bin/launcher.rs    the TUI launcher (raw ANSI + libc termios)
-  aircraft.rs        AircraftSpec + specs, registry, runtime state, spawning
+  aircraft.rs        AircraftSpec (built from plane configs), registry, spawning
   flight.rs          keybind resource, controls (mouse instructor + keyboard), flight model
   net.rs             multiplayer client (background threads + remote aircraft)
   camera.rs          third-person chase camera + distance fog
