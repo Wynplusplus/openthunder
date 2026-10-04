@@ -12,7 +12,7 @@
 #![allow(dead_code)]
 
 /// Bump this whenever the message formats change.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// State of one aircraft, as broadcast in a snapshot.
 #[derive(Clone, Debug, PartialEq)]
@@ -61,6 +61,11 @@ pub enum ServerMessage {
     /// The planes the server has, as `(id, plane.conf text)` pairs. Sent right
     /// after [`ServerMessage::Welcome`] so clients can load every plane in use.
     Planes { planes: Vec<(String, String)> },
+    /// The server's pilot crew configuration, as `crew.conf` text. Sent after
+    /// [`ServerMessage::Planes`] so clients use this server's pilot model
+    /// (g-tolerance, blackout/redout, stamina). An empty string means "keep the
+    /// client defaults".
+    Crew { config: String },
     /// The full set of players, sent every tick.
     Snapshot { players: Vec<PlayerSnapshot> },
     /// A player disconnected.
@@ -263,6 +268,9 @@ impl ServerMessage {
                 }
                 out
             }
+            ServerMessage::Crew { config } => {
+                format!("CREW\t{}", escape_text(config))
+            }
             ServerMessage::Snapshot { players } => {
                 let mut out = format!("SNAPSHOT\t{}", players.len());
                 for player in players {
@@ -323,6 +331,14 @@ impl ServerMessage {
                     index += 2;
                 }
                 Ok(ServerMessage::Planes { planes })
+            }
+            Some("CREW") => {
+                if fields.len() != 2 {
+                    return Err(ProtocolError("CREW wants 2 fields".into()));
+                }
+                Ok(ServerMessage::Crew {
+                    config: unescape_text(fields[1]),
+                })
             }
             Some("SNAPSHOT") => {
                 if fields.len() < 2 {
@@ -455,6 +471,9 @@ mod tests {
         });
         round_trip_server(ServerMessage::Error {
             reason: "server full".into(),
+        });
+        round_trip_server(ServerMessage::Crew {
+            config: "g_tolerance = 5.0\nnegative_g_tolerance = -2.5\n".into(),
         });
     }
 

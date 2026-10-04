@@ -13,6 +13,7 @@ use crate::combat::CombatFeedback;
 use crate::damage::{AircraftPart, DamageModel};
 use crate::flight::Bindings;
 use crate::net::NetClient;
+use crate::pilot::CrewSkills;
 
 #[derive(Component)]
 struct HudText;
@@ -47,6 +48,7 @@ fn spawn_hud(mut commands: Commands) {
 fn update_hud(
     bindings: Res<Bindings>,
     client: Res<NetClient>,
+    crew: Res<CrewSkills>,
     feedback: Res<CombatFeedback>,
     aircraft: Query<(&Aircraft, &Transform, &DamageModel), With<PlayerControlled>>,
     mut hud: Query<&mut Text, With<HudText>>,
@@ -116,7 +118,7 @@ fn update_hud(
     **text = format!(
         "{name}   {connection}\n\
          TAS {speed:5.0} km/h   IAS {ias:5.0} km/h   Alt {alt:6.0} m\n\
-         Throttle {thr:3.0}% {wep}   AoA {alpha:+5.1} deg   G {g:+.1}   Stamina {stamina:3.0}%   Pilot {pilot}\n\
+         Throttle {thr:3.0}% {wep}   AoA {alpha:+5.1} deg   G {g:+.1}   Stamina {stamina:3.0}%   Pilot {pilot} (tol {tol:.1}g)\n\
          Flaps {flaps}   Wing {wing:3.0}%   Engine {eng:3.0}%   Tail {tail:3.0}%   {status}\n\
          Ammo {ammo}   {guns}{hit_marker}\n\
          \n\
@@ -138,6 +140,7 @@ fn update_hud(
         g = aircraft.g_load,
         stamina = aircraft.stamina * 100.0,
         pilot = pilot,
+        tol = crew.g_tolerance,
         flaps = aircraft.flaps.label(),
         wing = damage.integrity(AircraftPart::LeftWing) * 100.0,
         eng = damage.integrity(AircraftPart::Engine) * 100.0,

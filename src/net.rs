@@ -23,6 +23,7 @@ use crate::aircraft::{
     Aircraft, AircraftRegistry, AircraftSpec, PlayerControlled, spawn_aircraft_model,
 };
 use crate::damage::{AircraftPart, DamageModel};
+use crate::pilot::CrewSkills;
 
 /// How often the local state is sent to the server.
 const SEND_HZ: f32 = 15.0;
@@ -234,6 +235,7 @@ fn send_local_state(
 fn receive_snapshots(
     mut commands: Commands,
     client: Res<NetClient>,
+    mut crew: ResMut<CrewSkills>,
     mut registry: ResMut<AircraftRegistry>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -311,6 +313,13 @@ fn receive_snapshots(
                     }
                 }
                 registry.specs = specs;
+            }
+            Ok(ServerMessage::Crew { config }) => {
+                *crew = CrewSkills::from_text(&config);
+                info!(
+                    "[net] applied server crew config: pilot tolerates {:.1} g / {:.1} g",
+                    crew.g_tolerance, crew.negative_g_tolerance
+                );
             }
             Ok(_) => {}
             Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,

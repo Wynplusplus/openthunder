@@ -48,6 +48,42 @@ impl Default for CrewSkills {
     }
 }
 
+impl CrewSkills {
+    /// Apply a `crew.conf` (`key = value`) over these skills, as sent by the
+    /// server. Unknown keys are ignored and missing keys keep their value, so a
+    /// server can tune just the g-tolerance and leave the rest at the defaults.
+    pub fn apply_text(&mut self, text: &str) {
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            let Ok(value) = value.trim().parse::<f32>() else {
+                continue;
+            };
+            match key.trim() {
+                "g_tolerance" => self.g_tolerance = value,
+                "negative_g_tolerance" => self.negative_g_tolerance = value,
+                "blackout_rate" => self.blackout_rate = value,
+                "recovery_rate" => self.recovery_rate = value,
+                "stamina_drain" => self.stamina_drain = value,
+                "stamina_recovery" => self.stamina_recovery = value,
+                _ => {}
+            }
+        }
+    }
+
+    /// The defaults with a `crew.conf` text applied on top.
+    pub fn from_text(text: &str) -> Self {
+        let mut crew = Self::default();
+        crew.apply_text(text);
+        crew
+    }
+}
+
 /// Advances pilot physiology by `dt` at load factor `g`, returning the new
 /// `(blackout, redout, stamina)`.
 ///
@@ -294,5 +330,37 @@ mod tests {
             (_, _, stamina) = step_pilot(0.0, 0.0, stamina, 1.0, &crew, 0.1);
         }
         assert_eq!(stamina, 1.0);
+    }
+
+    #[test]
+    fn crew_config_overrides_only_the_keys_it_sets() {
+        let crew = CrewSkills::from_text(
+            "# server crew\ng_tolerance = 5.0\nnegative_g_tolerance = -2.5\n",
+        );
+        assert_eq!(crew.g_tolerance, 5.0);
+        assert_eq!(crew.negative_g_tolerance, -2.5);
+        // Untouched keys keep their defaults.
+        assert_eq!(crew.blackout_rate, CrewSkills::default().blackout_rate);
+        assert_eq!(crew.stamina_drain, CrewSkills::default().stamina_drain);
+    }
+
+    #[test]
+    fn an_empty_crew_config_keeps_the_defaults() {
+        assert_eq!(CrewSkills::from_text("").g_tolerance, 6.5);
+    }
+
+    #[test]
+    fn a_lower_server_tolerance_means_an_earlier_blackout() {
+        // A strict 4 g pilot blacks out at 6 g, where the default (6.5 g) would
+        // not.
+        let strict = CrewSkills::from_text("g_tolerance = 4.0\n");
+        let (blackout, _, _) = {
+            let mut blackout = 0.0;
+            for _ in 0..50 {
+                (blackout, _, _) = step_pilot(blackout, 0.0, 1.0, 6.0, &strict, 0.1);
+            }
+            (blackout, 0.0, 1.0)
+        };
+        assert!(blackout >= 1.0, "6 g should black out a 4 g pilot");
     }
 }

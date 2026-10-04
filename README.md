@@ -85,8 +85,12 @@ streams its own aircraft state and renders everyone else.
 Maps and gamemodes live on the **server**: a map file picks a gamemode and
 configures its rules, so both are easy to extend. See the server repo's README.
 
+The server also ships its **pilot crew configuration** (`crew.conf`) to every
+client on connect, so a server operator can tune the pilot's g-tolerance for the
+whole server — see [Pilot g-tolerance and blackout](#pilot-g-tolerance-and-blackout).
+
 The HUD shows the connection status (single-player / connecting / online / map +
-gamemode).
+gamemode) and the server's pilot tolerance.
 
 ---
 
@@ -202,6 +206,13 @@ airframe, as in War Thunder:
 
 The overlay is a procedurally generated radial gradient (tunnel vision) tinted
 black for blackout or red for red-out.
+
+**Configurable per server.** The dedicated server ships a `crew.conf` (shipped
+in the `CREW` protocol message on connect) that overrides these values for every
+client on that server — lower `g_tolerance` for a harsher, more realistic server,
+raise it for a forgiving one. Single-player uses the built-in defaults. Keys:
+`g_tolerance`, `negative_g_tolerance`, `blackout_rate`, `recovery_rate`,
+`stamina_drain`, `stamina_recovery` (unknown keys are ignored).
 
 
 ## Aircraft
