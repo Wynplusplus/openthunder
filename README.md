@@ -43,6 +43,7 @@ escapes, no extra TUI dependency) where you can:
   launcher when it exits.
 - **Select aircraft** — choose between the F4U-4 Corsair, Bf 109 G-6 and
   Spitfire F Mk IXc.
+- **Display** — switch between **Fullscreen** (default) and Windowed.
 - **Edit keybinds** — pick an action, press a new key, and it is saved instantly.
 - **Reset keybinds to defaults**.
 
@@ -50,7 +51,7 @@ Settings are stored in shared config files:
 
 ```
 $XDG_CONFIG_HOME/openthunder/keybinds.conf     # keybinds
-$XDG_CONFIG_HOME/openthunder/settings.conf     # selected aircraft
+$XDG_CONFIG_HOME/openthunder/settings.conf     # aircraft + display mode
 # or ~/.config/openthunder/...
 ```
 

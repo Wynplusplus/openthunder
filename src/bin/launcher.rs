@@ -196,13 +196,15 @@ fn render(lines: &[String]) {
     let _ = io::stdout().flush();
 }
 
-fn menu_lines(selected: usize, status: &str, plane: &str) -> Vec<String> {
+fn menu_lines(selected: usize, status: &str, plane: &str, fullscreen: bool) -> Vec<String> {
+    let display = if fullscreen { "Fullscreen" } else { "Windowed" };
     let items = [
-        "Launch game",
-        "Select aircraft",
-        "Edit keybinds",
-        "Reset keybinds to defaults",
-        "Quit",
+        "Launch game".to_string(),
+        "Select aircraft".to_string(),
+        format!("Display: {display}  (Enter to switch)"),
+        "Edit keybinds".to_string(),
+        "Reset keybinds to defaults".to_string(),
+        "Quit".to_string(),
     ];
     let mut lines = vec![
         String::new(),
@@ -374,7 +376,12 @@ fn run() -> io::Result<()> {
 
     loop {
         match screen {
-            Screen::Menu => render(&menu_lines(menu_selected, &status, &settings.plane)),
+            Screen::Menu => render(&menu_lines(
+                menu_selected,
+                &status,
+                &settings.plane,
+                settings.fullscreen,
+            )),
             Screen::Planes => render(&plane_lines(&settings.plane, plane_selected, &status)),
             Screen::Keybinds => render(&keybind_lines(
                 &keybinds,
@@ -392,7 +399,7 @@ fn run() -> io::Result<()> {
         match screen {
             Screen::Menu => match key {
                 Key::Up => menu_selected = menu_selected.saturating_sub(1),
-                Key::Down => menu_selected = (menu_selected + 1).min(4),
+                Key::Down => menu_selected = (menu_selected + 1).min(5),
                 Key::Char('q') | Key::Char('Q') => break,
                 Key::Enter => match menu_selected {
                     0 => {
@@ -408,10 +415,22 @@ fn run() -> io::Result<()> {
                         status = "Pick an aircraft.".to_string();
                     }
                     2 => {
+                        settings.fullscreen = !settings.fullscreen;
+                        let _ = settings.save();
+                        status = format!(
+                            "Display set to {}.",
+                            if settings.fullscreen {
+                                "Fullscreen"
+                            } else {
+                                "Windowed"
+                            }
+                        );
+                    }
+                    3 => {
                         screen = Screen::Keybinds;
                         status = "Changes are saved automatically.".to_string();
                     }
-                    3 => {
+                    4 => {
                         keybinds = Keybinds::default();
                         let _ = keybinds.save();
                         status = "Reset all keybinds to defaults.".to_string();

@@ -15,12 +15,15 @@ use crate::planes;
 pub struct Settings {
     /// Aircraft id (see [`planes::PLANES`]).
     pub plane: String,
+    /// Start the game fullscreen (borderless) instead of in a window.
+    pub fullscreen: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             plane: planes::default_plane().to_string(),
+            fullscreen: true,
         }
     }
 }
@@ -59,6 +62,8 @@ impl Settings {
                 if planes::find(value).is_some() {
                     settings.plane = value.to_string();
                 }
+            } else if name.trim() == "fullscreen" {
+                settings.fullscreen = matches!(value.trim(), "true" | "1" | "yes" | "on");
             }
         }
         settings
@@ -66,13 +71,14 @@ impl Settings {
 
     pub fn to_config_string(&self) -> String {
         format!(
-            "# OpenThunder settings\n# Aircraft: one of {}\nplane = {}\n",
+            "# OpenThunder settings\n# Aircraft: one of {}\nplane = {}\nfullscreen = {}\n",
             planes::PLANES
                 .iter()
                 .map(|plane| plane.id)
                 .collect::<Vec<_>>()
                 .join(", "),
             self.plane,
+            self.fullscreen,
         )
     }
 
@@ -88,4 +94,34 @@ impl Settings {
 /// Full path to the settings file.
 pub fn settings_path() -> PathBuf {
     config_dir().join("settings.conf")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fullscreen_defaults_on() {
+        assert!(Settings::default().fullscreen);
+    }
+
+    #[test]
+    fn parses_fullscreen_values() {
+        assert!(!Settings::parse("fullscreen = false\n").fullscreen);
+        assert!(Settings::parse("fullscreen = true\n").fullscreen);
+        assert!(Settings::parse("fullscreen = yes\n").fullscreen);
+        // Missing line -> default (on).
+        assert!(Settings::parse("plane = Bf 109 G-6\n").fullscreen);
+    }
+
+    #[test]
+    fn round_trips_through_config() {
+        let settings = Settings {
+            plane: "Spitfire F Mk IXc".to_string(),
+            fullscreen: false,
+        };
+        let parsed = Settings::parse(&settings.to_config_string());
+        assert_eq!(parsed.plane, "Spitfire F Mk IXc");
+        assert!(!parsed.fullscreen);
+    }
 }

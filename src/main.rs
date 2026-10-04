@@ -1,8 +1,7 @@
 //! OpenThunder — a War Thunder "Air Realistic Battle"-style flight prototype.
 //!
-//! This is the smallest thing that is genuinely fun to fly: one aircraft (the
-//! F4U-4 Corsair), a simple map, a physical flight model with stalls, and a
-//! damage model with per-section hit points. There is no combat yet.
+//! A small flight prototype: several aircraft, a simple map, a physical flight
+//! model with stalls, and a per-section damage model. There is no combat yet.
 //!
 //! Run with `cargo run --release` (or `cargo run`).
 
@@ -14,13 +13,25 @@ mod hud;
 mod world;
 
 use bevy::prelude::*;
+use bevy::window::WindowMode;
+
+use openthunder::settings::Settings;
 
 fn main() {
+    // Window mode comes from the launcher's setting (fullscreen by default).
+    let settings = Settings::load_or_create();
+    let mode = if settings.fullscreen {
+        WindowMode::BorderlessFullscreen(MonitorSelection::Primary)
+    } else {
+        WindowMode::Windowed
+    };
+
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "OpenThunder — Air RB Prototype".to_string(),
                 resolution: (1280, 720).into(),
+                mode,
                 ..default()
             }),
             ..default()
