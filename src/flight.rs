@@ -273,8 +273,11 @@ fn read_player_input(
         aircraft.flaps = aircraft.flaps.less();
     }
 
-    // --- War emergency power (cuts out if it overheats; must cool to re-engage) ---
-    let want_wep = bindings.pressed(&keys, WEP);
+    // --- War emergency power ---
+    // Only engines that actually have it (water injection / boost), and only at
+    // full throttle — WT's "110%" notch. It builds heat and cuts out if held too
+    // long, and must cool before it re-engages.
+    let want_wep = spec.has_wep && aircraft.throttle >= 0.99 && bindings.pressed(&keys, WEP);
     aircraft.wep = if aircraft.wep {
         want_wep && aircraft.wep_heat < 0.999
     } else {
@@ -1058,5 +1061,104 @@ mod tests {
                 "{name}: high-speed roll {fast:.0} should stiffen below cruise {cruise:.0}"
             );
         }
+    }
+
+    /// Horizontal acceleration at `speed` with level trim, WEP on or off.
+    fn level_acceleration(spec: &AircraftSpec, speed: f32, wep: bool) -> f32 {
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.add_systems(Update, flight_dynamics);
+        let mut aircraft = Aircraft::new(spec.clone());
+        aircraft.velocity = Vec3::NEG_Z * speed;
+        aircraft.throttle = 1.0;
+        aircraft.wep = wep;
+        let entity = app
+            .world_mut()
+            .spawn((
+                Transform::from_translation(Vec3::new(0.0, 1000.0, 0.0)),
+                aircraft,
+                DamageModel::new(100.0),
+                PlayerControlled,
+            ))
+            .id();
+        let before = app.world().get::<Aircraft>(entity).unwrap().velocity.z;
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs_f32(0.02));
+        app.update();
+        let after = app.world().get::<Aircraft>(entity).unwrap().velocity.z;
+        // Forward is -Z, so forward acceleration is the drop in z.
+        (before - after) / 0.02
+    }
+
+    #[test]
+    fn wep_adds_thrust_on_engines_that_have_it() {
+        let spec = corsair();
+        assert!(spec.has_wep, "the Corsair should have WEP");
+        let off = level_acceleration(&spec, 150.0, false);
+        let on = level_acceleration(&spec, 150.0, true);
+        assert!(
+            on > off + 0.1,
+            "WEP should add thrust ({on:.2} vs {off:.2} m/s^2)"
+        );
+    }
+
+    #[test]
+    fn wep_is_per_plane() {
+        assert!(spec_named("F4U-4 Corsair").has_wep);
+        assert!(spec_named("Spitfire F Mk IXc").has_wep);
+        assert!(
+            !spec_named("Bf 109 G-6").has_wep,
+            "the G-6 had no water-methanol injection"
+        );
+    }
+
+    #[test]
+    fn wep_engages_only_at_full_throttle_and_on_wep_engines() {
+        // Corsair at full throttle with the WEP key held: engages.
+        let (mut app, entity) = input_app(0.0);
+        app.world_mut()
+            .get_mut::<Aircraft>(entity)
+            .unwrap()
+            .throttle = 1.0;
+        press_and_update(&mut app, KeyCode::KeyB);
+        assert!(
+            app.world().get::<Aircraft>(entity).unwrap().wep,
+            "WEP should engage at full throttle"
+        );
+
+        // Corsair below full throttle: does not engage.
+        let (mut app, entity) = input_app(0.0);
+        app.world_mut()
+            .get_mut::<Aircraft>(entity)
+            .unwrap()
+            .throttle = 0.8;
+        press_and_update(&mut app, KeyCode::KeyB);
+        assert!(
+            !app.world().get::<Aircraft>(entity).unwrap().wep,
+            "WEP needs full throttle"
+        );
+
+        // Bf 109 (no WEP) at full throttle: still does not engage.
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<AccumulatedMouseMotion>()
+            .init_resource::<MouseAim>()
+            .init_resource::<crate::menu::GameMenu>()
+            .init_resource::<crate::camera::FreeLook>()
+            .insert_resource(Bindings::from_config(&Keybinds::default()))
+            .add_systems(Update, read_player_input);
+        let mut aircraft = Aircraft::new(spec_named("Bf 109 G-6"));
+        aircraft.throttle = 1.0;
+        let entity = app
+            .world_mut()
+            .spawn((Transform::default(), aircraft, PlayerControlled))
+            .id();
+        press_and_update(&mut app, KeyCode::KeyB);
+        assert!(
+            !app.world().get::<Aircraft>(entity).unwrap().wep,
+            "the G-6 has no WEP"
+        );
     }
 }

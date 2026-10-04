@@ -58,7 +58,9 @@ pub struct AircraftSpec {
     pub static_thrust: f32,
     /// Propeller efficiency (0..1).
     pub prop_efficiency: f32,
-    /// Thrust multiplier when using war emergency power.
+    /// Whether this engine has war emergency power (water injection / boost).
+    pub has_wep: bool,
+    /// Power multiplier while war emergency power is engaged.
     pub wep_multiplier: f32,
     /// Altitude (m) below which the engine makes full power.
     pub critical_altitude: f32,
@@ -327,6 +329,7 @@ impl AircraftSpec {
             max_power: config.max_power,
             static_thrust: config.static_thrust,
             prop_efficiency: config.prop_efficiency,
+            has_wep: config.has_wep,
             wep_multiplier: config.wep_multiplier,
             critical_altitude: config.critical_altitude,
             altitude_power_falloff: config.altitude_power_falloff,

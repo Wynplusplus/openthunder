@@ -205,8 +205,12 @@ for the limits and stiffening) is derived from it.
 - **Stall** with a post-stall lift drop.
 - **Flaps** in combat / takeoff / landing positions, adding lift and drag, with
   speed limits and instructor **auto-retract** when overspeed.
-- **War emergency power (WEP)**: extra thrust that builds heat and cuts out if
-  held too long.
+- **War emergency power (WEP)**: an extra power setting on engines that had it
+  (the Corsair's water injection, the Spitfire's +25 lb boost — but not the
+  Bf 109 G-6's DB 605A). Hold `B` **at full throttle** (WT's "110%" notch) for a
+  real boost in speed and climb; it builds heat and cuts out if held too long,
+  and must cool before re-engaging. The HUD shows `WEP` / `WEP ready` /
+  `WEP needs 100% throttle`.
 - **Propeller torque** roll, trimmed out by the instructor.
 - **Structural limits**: each aircraft has its own g limit and IAS redline;
   exceeding them damages the airframe.
@@ -250,7 +254,8 @@ All three are tuned to their War Thunder (RB) data sheets.
 | | F4U-4 Corsair | Bf 109 G-6 | Spitfire F Mk IXc |
 | --- | --- | --- | --- |
 | Nation | USA | Germany | Great Britain |
-| Engine | R-2800-18W | DB-605AM | Merlin-61 |
+| Engine | R-2800-18W | DB 605A | Merlin-61 |
+| WEP | water injection (+20%) | none | +25 lb boost (+25%) |
 | Max speed | 711 km/h @ 9,000 m | 669 km/h @ 5,500 m | 642 km/h @ 8,537 m |
 | Rate of climb | 18.5 m/s | 19.6 m/s | 18.9 m/s |
 | Turn time | 20.0 s | 20.0 s | 17.2 s |

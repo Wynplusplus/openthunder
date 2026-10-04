@@ -182,12 +182,17 @@ fn update_hud(
         format!("DAMAGED: {}", destroyed.join(", "))
     };
 
-    let wep = if aircraft.wep {
+    let wep = if !aircraft.spec.has_wep {
+        // This engine has no war emergency power.
+        String::new()
+    } else if aircraft.wep {
         "WEP".to_string()
     } else if aircraft.wep_heat > 0.5 {
-        format!("WEP {:.0}% heat", aircraft.wep_heat * 100.0)
+        format!("WEP cooling {:.0}%", aircraft.wep_heat * 100.0)
+    } else if aircraft.throttle >= 0.99 {
+        "WEP ready".to_string()
     } else {
-        String::new()
+        "WEP needs 100% throttle".to_string()
     };
 
     let pilot = if aircraft.blackout >= 1.0 {

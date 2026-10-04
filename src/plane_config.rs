@@ -53,6 +53,9 @@ pub struct PlaneConfig {
     pub max_power: f32,
     pub static_thrust: f32,
     pub prop_efficiency: f32,
+    /// Whether this engine has war emergency power (water injection / boost).
+    pub has_wep: bool,
+    /// Extra power factor while WEP is engaged.
     pub wep_multiplier: f32,
     pub critical_altitude: f32,
     pub altitude_power_falloff: f32,
@@ -104,6 +107,7 @@ impl Default for PlaneConfig {
             max_power: 1_000_000.0,
             static_thrust: 12_000.0,
             prop_efficiency: 0.8,
+            has_wep: false,
             wep_multiplier: 1.1,
             critical_altitude: 6_000.0,
             altitude_power_falloff: 5_000.0,
@@ -144,6 +148,15 @@ impl Default for PlaneConfig {
 
 fn parse_f32(text: &str) -> Option<f32> {
     text.trim().parse().ok()
+}
+
+/// Parse a boolean config value (`true`/`false`, `1`/`0`, `yes`/`no`, `on`/`off`).
+fn parse_bool(text: &str) -> Option<bool> {
+    match text.trim().to_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" => Some(true),
+        "false" | "0" | "no" | "off" => Some(false),
+        _ => None,
+    }
 }
 
 fn parse_vec3(text: &str) -> Option<[f32; 3]> {
@@ -231,6 +244,7 @@ impl PlaneConfig {
                 "wep_multiplier" => {
                     plane.wep_multiplier = parse_f32(value).unwrap_or(plane.wep_multiplier)
                 }
+                "has_wep" => plane.has_wep = parse_bool(value).unwrap_or(plane.has_wep),
                 "critical_altitude" => {
                     plane.critical_altitude = parse_f32(value).unwrap_or(plane.critical_altitude)
                 }
@@ -313,6 +327,7 @@ impl PlaneConfig {
         let _ = writeln!(out, "max_power = {}", self.max_power);
         let _ = writeln!(out, "static_thrust = {}", self.static_thrust);
         let _ = writeln!(out, "prop_efficiency = {}", self.prop_efficiency);
+        let _ = writeln!(out, "has_wep = {}", self.has_wep);
         let _ = writeln!(out, "wep_multiplier = {}", self.wep_multiplier);
         let _ = writeln!(out, "critical_altitude = {}", self.critical_altitude);
         let _ = writeln!(
@@ -388,7 +403,8 @@ pub fn default_planes() -> Vec<PlaneConfig> {
             max_power: 1_640_000.0,
             static_thrust: 18_000.0,
             prop_efficiency: 0.82,
-            wep_multiplier: 1.15,
+            has_wep: true,
+            wep_multiplier: 1.20,
             critical_altitude: 7_000.0,
             altitude_power_falloff: 6_000.0,
             cl_slope: 4.5,
@@ -448,6 +464,8 @@ pub fn default_planes() -> Vec<PlaneConfig> {
             max_power: 1_100_000.0,
             static_thrust: 13_000.0,
             prop_efficiency: 0.80,
+            // The DB 605A in the G-6 had no water-methanol injection, so no WEP.
+            has_wep: false,
             wep_multiplier: 1.12,
             critical_altitude: 5_800.0,
             altitude_power_falloff: 5_000.0,
@@ -513,7 +531,9 @@ pub fn default_planes() -> Vec<PlaneConfig> {
             max_power: 1_167_000.0,
             static_thrust: 13_000.0,
             prop_efficiency: 0.82,
-            wep_multiplier: 1.15,
+            // Merlin 61/66 with +25 lb boost.
+            has_wep: true,
+            wep_multiplier: 1.25,
             critical_altitude: 6_500.0,
             altitude_power_falloff: 6_000.0,
             cl_slope: 4.5,
