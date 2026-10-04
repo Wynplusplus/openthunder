@@ -39,6 +39,12 @@ pub struct FreeLook {
     pub pitch: f32,
 }
 
+/// Whether the player has toggled the zoom in.
+#[derive(Resource, Default)]
+pub struct ZoomState {
+    pub active: bool,
+}
+
 impl FreeLook {
     /// Orbit rotation in the aircraft's frame.
     pub fn rotation(&self) -> Quat {
@@ -51,6 +57,7 @@ pub struct ChaseCameraPlugin;
 impl Plugin for ChaseCameraPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<FreeLook>()
+            .init_resource::<ZoomState>()
             .add_systems(Startup, spawn_camera)
             .add_systems(
                 Update,
@@ -115,6 +122,7 @@ fn chase_camera(
     mouse: Res<ButtonInput<MouseButton>>,
     bindings: Res<Bindings>,
     look: Res<FreeLook>,
+    mut zoom_state: ResMut<ZoomState>,
     target: Query<&Transform, (With<PlayerControlled>, Without<ChaseCamera>)>,
     mut camera: Query<(&mut Transform, &mut Projection), With<ChaseCamera>>,
     mut rig: Local<Quat>,
@@ -129,9 +137,11 @@ fn chase_camera(
 
     let dt = time.delta_secs();
 
-    // --- Zoom: hold the key to narrow the field of view, WT style ---
-    let want_zoom = bindings.pressed(&keys, &mouse, ZOOM);
-    let target_zoom = if want_zoom { 1.0 } else { 0.0 };
+    // --- Zoom: tap the button to toggle a narrow field of view, WT style ---
+    if bindings.just_pressed(&keys, &mouse, ZOOM) {
+        zoom_state.active = !zoom_state.active;
+    }
+    let target_zoom = if zoom_state.active { 1.0 } else { 0.0 };
     *zoom += (target_zoom - *zoom) * (1.0 - (-10.0 * dt).exp()).clamp(0.0, 1.0);
     if let Projection::Perspective(perspective) = &mut *projection {
         perspective.fov = NORMAL_FOV + (ZOOM_FOV - NORMAL_FOV) * *zoom;
@@ -255,8 +265,17 @@ mod tests {
         );
     }
 
+    /// Clear the "just pressed" state each frame, like the input plugin does.
+    fn clear_just_pressed(
+        mut keys: ResMut<ButtonInput<KeyCode>>,
+        mut mouse: ResMut<ButtonInput<MouseButton>>,
+    ) {
+        keys.clear();
+        mouse.clear();
+    }
+
     #[test]
-    fn holding_zoom_narrows_the_field_of_view() {
+    fn tapping_zoom_toggles_the_field_of_view() {
         use openthunder::keybinds::Keybinds;
 
         let mut app = App::new();
@@ -264,8 +283,9 @@ mod tests {
             .init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<FreeLook>()
+            .init_resource::<ZoomState>()
             .insert_resource(Bindings::from_config(&Keybinds::default()))
-            .add_systems(Update, chase_camera);
+            .add_systems(Update, (chase_camera, clear_just_pressed).chain());
 
         app.world_mut().spawn((
             Transform::from_translation(Vec3::new(0.0, 1000.0, 0.0)),
@@ -287,37 +307,40 @@ mod tests {
             Projection::Perspective(perspective) => perspective.fov,
             _ => unreachable!("the chase camera is a perspective camera"),
         };
+        let run = |app: &mut App, frames: usize| {
+            for _ in 0..frames {
+                app.world_mut()
+                    .resource_mut::<Time>()
+                    .advance_by(std::time::Duration::from_secs_f32(0.05));
+                app.update();
+            }
+        };
 
-        // Hold the zoom button: the field of view narrows.
+        // Tap the zoom button once: the field of view narrows.
         app.world_mut()
             .resource_mut::<ButtonInput<MouseButton>>()
             .press(MouseButton::Right);
-        for _ in 0..80 {
-            app.world_mut()
-                .resource_mut::<Time>()
-                .advance_by(std::time::Duration::from_secs_f32(0.05));
-            app.update();
-        }
-        let zoomed = fov_of(&app);
+        run(&mut app, 80);
         assert!(
-            zoomed < NORMAL_FOV * 0.7,
-            "zoom should narrow the fov, got {zoomed}"
-        );
-
-        // Release: it eases back out.
-        app.world_mut()
-            .resource_mut::<ButtonInput<MouseButton>>()
-            .release(MouseButton::Right);
-        for _ in 0..120 {
-            app.world_mut()
-                .resource_mut::<Time>()
-                .advance_by(std::time::Duration::from_secs_f32(0.05));
-            app.update();
-        }
-        assert!(
-            (fov_of(&app) - NORMAL_FOV).abs() < 0.05,
-            "zoom should return to normal, got {}",
+            fov_of(&app) < NORMAL_FOV * 0.7,
+            "a tap should zoom in, got {}",
             fov_of(&app)
         );
+        assert!(app.world().resource::<ZoomState>().active);
+
+        // Tap again: it eases back out.
+        {
+            let mut mouse = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+            mouse.release(MouseButton::Right);
+            mouse.clear();
+            mouse.press(MouseButton::Right);
+        }
+        run(&mut app, 120);
+        assert!(
+            (fov_of(&app) - NORMAL_FOV).abs() < 0.05,
+            "a second tap should zoom out, got {}",
+            fov_of(&app)
+        );
+        assert!(!app.world().resource::<ZoomState>().active);
     }
 }
