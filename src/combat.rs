@@ -395,6 +395,7 @@ mod tests {
                 Transform::from_translation(Vec3::new(0.0, 50.0, -100.0)),
                 DamageModel::new(10.0),
                 TestTarget {
+                    kind: crate::targets::TargetKind::Tank,
                     alive: true,
                     respawn_in: 0.0,
                 },

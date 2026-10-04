@@ -286,15 +286,20 @@ Implemented in `src/combat.rs`.
 
 ### Test targets
 
-In **free flight** (single-player or a `free_flight` server) a column of
-shootable ground targets is placed near the runway, War Thunder test-flight
-style: six tanks and three fat fuel tanks. Each has its own hit box and health,
-blows up in a little fireball when destroyed, and **respawns after 20 s** so you
-can keep practising. The HUD shows `Targets N/9 destroyed`. In team modes the
-targets are cleared away.
+In **free flight** (single-player or a `free_flight` server) a set of shootable
+targets is placed near the runway, War Thunder test-flight style:
+
+- **Six tanks** and **three fuel tanks** on the ground, plus
+- **Three target planes** circling fixed orbits — they **do not fight back**.
+
+Each has a hit box and health, blows up when destroyed (planes tumble down
+first), and **respawns after 20 s** so you can keep practising. All of them get
+an **Air RB-style marker** (`Tank 1.2 km`, `Target plane 0.8 km`) once spotted,
+and the HUD shows `Targets N/12 destroyed`. In team modes the targets are
+cleared away.
 
 Implemented in `src/targets.rs`; the hit detection in `combat.rs` uses each
-target's own `HitBox` instead of the aircraft-sized default.
+target's own `HitBox` (or the aircraft default for the planes).
 
 ## Damage model
 

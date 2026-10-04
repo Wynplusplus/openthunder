@@ -67,7 +67,7 @@ impl Spotting {
     }
 
     /// Cosine of the view-cone half-angle.
-    fn view_cone_cos(&self) -> f32 {
+    pub(crate) fn view_cone_cos(&self) -> f32 {
         self.view_cone_deg.to_radians().cos()
     }
 }
