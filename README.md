@@ -125,6 +125,11 @@ aircraft just continues with neutral controls. Use `Up`/`Down` and `Enter`.
 (War Thunder style) while the aircraft keeps flying. Release to ease back behind
 the nose. The mouse does not steer the aircraft while free-looking.
 
+When the game starts you are on the **spawn screen**: choose an aircraft with
+`Up`/`Down` and press `Enter` to spawn into the air. The list is the built-in
+planes, or the planes the server sent if you are connected. The in-game menu
+(`Esc`) has **Change plane** to come back to it.
+
 ### Instructor (mouse aim)
 
 Like War Thunder's instructor, the mouse-aim system does more than point the
@@ -265,6 +270,7 @@ src/
   damage.rs          per-section damage model + debug damage keys
   hud.rs             telemetry overlay
   menu.rs            in-game menu (Esc); the world keeps running while open
+  spawn_menu.rs      pre-spawn plane selection screen
 ```
 
 ## Known simplifications

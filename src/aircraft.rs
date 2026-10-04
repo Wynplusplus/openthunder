@@ -14,8 +14,6 @@ use bevy::prelude::*;
 
 use openthunder::plane_config;
 use openthunder::plane_config::PlaneConfig;
-use openthunder::planes;
-use openthunder::settings::Settings;
 
 use crate::damage::DamageModel;
 
@@ -386,7 +384,7 @@ impl Plugin for AircraftPlugin {
             .map(AircraftSpec::from_config)
             .collect();
         app.insert_resource(AircraftRegistry { specs })
-            .add_systems(Startup, (log_aircraft_types, spawn_player_aircraft))
+            .add_systems(Startup, log_aircraft_types)
             .add_systems(Update, spin_propellers);
     }
 }
@@ -394,45 +392,6 @@ impl Plugin for AircraftPlugin {
 /// Logs the available aircraft types so it is obvious where to add new ones.
 fn log_aircraft_types(registry: Res<AircraftRegistry>) {
     info!("Registered aircraft: {}", registry.names().join(", "));
-}
-
-fn spawn_player_aircraft(
-    mut commands: Commands,
-    registry: Res<AircraftRegistry>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    // Aircraft is chosen by `--plane <id>` on the command line (used by the
-    // launcher), otherwise by the saved settings, otherwise the default.
-    let requested = plane_arg().unwrap_or_else(|| Settings::load_or_create().plane);
-
-    let spec = registry
-        .get(requested.as_str())
-        .or_else(|| registry.get(planes::default_plane()))
-        .expect("the default aircraft spec must be registered")
-        .clone();
-    info!("Flying: {}", spec.name);
-
-    let mut aircraft = Aircraft::new(spec);
-    // Start already flying so the player is immediately airborne.
-    aircraft.velocity = Vec3::NEG_Z * aircraft.spec.cruise_speed;
-
-    let entity = spawn_aircraft(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        aircraft,
-        Transform::from_translation(START_POSITION),
-    );
-    commands.entity(entity).insert(PlayerControlled);
-}
-
-/// Reads `--plane <id>` from the command line, if present.
-fn plane_arg() -> Option<String> {
-    let args: Vec<String> = std::env::args().collect();
-    args.iter()
-        .position(|arg| arg == "--plane")
-        .and_then(|index| args.get(index + 1).cloned())
 }
 
 /// Spawns an aircraft (root entity + visual children) and returns the root.

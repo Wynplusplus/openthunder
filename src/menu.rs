@@ -14,7 +14,7 @@ pub struct GameMenu {
 }
 
 /// The menu actions, in order.
-const ITEMS: [&str; 2] = ["Resume", "Quit to Desktop"];
+const ITEMS: [&str; 3] = ["Resume", "Change plane", "Quit to Desktop"];
 
 #[derive(Component)]
 struct MenuRoot;
@@ -112,6 +112,7 @@ fn toggle_menu(keys: Res<ButtonInput<KeyCode>>, mut menu: ResMut<GameMenu>) {
 fn menu_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut menu: ResMut<GameMenu>,
+    mut spawn: ResMut<crate::spawn_menu::SpawnState>,
     mut exit: MessageWriter<AppExit>,
 ) {
     if !menu.open {
@@ -127,6 +128,11 @@ fn menu_input(
         match menu.selected {
             0 => menu.open = false, // Resume
             1 => {
+                // Change plane: reopen the spawn menu.
+                spawn.choosing = true;
+                menu.open = false;
+            }
+            2 => {
                 exit.write(AppExit::Success); // Quit to desktop
             }
             _ => {}
@@ -166,6 +172,7 @@ mod tests {
         app.add_plugins(MinimalPlugins)
             .init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<GameMenu>()
+            .init_resource::<crate::spawn_menu::SpawnState>()
             .add_message::<AppExit>()
             .add_systems(Update, (toggle_menu, menu_input));
         app
@@ -200,9 +207,11 @@ mod tests {
         step(&mut app, &[KeyCode::ArrowDown]);
         assert_eq!(app.world().resource::<GameMenu>().selected, 1);
         step(&mut app, &[KeyCode::ArrowDown]);
-        assert_eq!(app.world().resource::<GameMenu>().selected, 1); // clamped
+        assert_eq!(app.world().resource::<GameMenu>().selected, 2);
+        step(&mut app, &[KeyCode::ArrowDown]);
+        assert_eq!(app.world().resource::<GameMenu>().selected, 2); // clamped
         step(&mut app, &[KeyCode::ArrowUp]);
-        assert_eq!(app.world().resource::<GameMenu>().selected, 0);
+        assert_eq!(app.world().resource::<GameMenu>().selected, 1);
     }
 
     #[test]
@@ -211,13 +220,33 @@ mod tests {
         {
             let mut menu = app.world_mut().resource_mut::<GameMenu>();
             menu.open = true;
-            menu.selected = 1; // "Quit to Desktop"
+            menu.selected = 2; // "Quit to Desktop"
         }
         step(&mut app, &[KeyCode::Enter]);
         assert!(
             !app.world().resource::<Messages<AppExit>>().is_empty(),
             "quit should write an AppExit"
         );
+    }
+
+    #[test]
+    fn selecting_change_plane_opens_the_spawn_menu() {
+        let mut app = menu_app();
+        {
+            let mut menu = app.world_mut().resource_mut::<GameMenu>();
+            menu.open = true;
+            menu.selected = 1; // "Change plane"
+        }
+        app.world_mut()
+            .resource_mut::<crate::spawn_menu::SpawnState>()
+            .choosing = false;
+        step(&mut app, &[KeyCode::Enter]);
+        assert!(
+            app.world()
+                .resource::<crate::spawn_menu::SpawnState>()
+                .choosing
+        );
+        assert!(!app.world().resource::<GameMenu>().open);
     }
 
     #[test]

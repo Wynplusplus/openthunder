@@ -13,6 +13,7 @@ mod flight;
 mod hud;
 mod menu;
 mod net;
+mod spawn_menu;
 mod world;
 
 use bevy::prelude::*;
@@ -56,6 +57,7 @@ fn main() {
             menu::GameMenuPlugin,
             net::NetPlugin,
             combat::CombatPlugin,
+            spawn_menu::SpawnMenuPlugin,
         ))
         .run();
 }
