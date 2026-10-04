@@ -751,6 +751,47 @@ mod tests {
         assert!(wep > slow, "WEP should increase torque");
     }
 
+    /// Approximate War Thunder Air RB roll rates: the Corsair rolls best, the
+    /// Bf 109 worst, and everyone stiffens up badly near the redline.
+    #[test]
+    fn roll_rates_are_realistic() {
+        let spec = |name: &str| {
+            AircraftSpec::from_config(
+                &openthunder::plane_config::default_planes()
+                    .into_iter()
+                    .find(|config| config.name == name)
+                    .unwrap(),
+            )
+        };
+        let roll = |spec: &AircraftSpec, ias: f32| {
+            (spec.roll_rate * control_authority(ias, ias / 320.0, spec)).to_degrees()
+        };
+
+        let corsair = spec("F4U-4 Corsair");
+        let spitfire = spec("Spitfire F Mk IXc");
+        let bf109 = spec("Bf 109 G-6");
+
+        for plane in [&corsair, &spitfire, &bf109] {
+            let rate = roll(plane, 150.0);
+            assert!(
+                (50.0..=140.0).contains(&rate),
+                "{} cruise roll {rate:.0}°/s out of range",
+                plane.name
+            );
+        }
+        assert!(roll(&corsair, 150.0) > roll(&spitfire, 150.0));
+        assert!(roll(&spitfire, 150.0) > roll(&bf109, 150.0));
+
+        for plane in [&corsair, &spitfire, &bf109] {
+            let fast = roll(plane, 235.0);
+            assert!(
+                fast < roll(plane, 150.0) * 0.6,
+                "{} should stiffen near the redline, got {fast:.0}°/s",
+                plane.name
+            );
+        }
+    }
+
     #[test]
     fn flap_limits_are_ordered_combat_takeoff_landing() {
         let spec = corsair();
