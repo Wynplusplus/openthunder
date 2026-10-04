@@ -85,6 +85,19 @@ streams its own aircraft state and renders everyone else.
 Maps and gamemodes live on the **server**: a map file picks a gamemode and
 configures its rules, so both are easy to extend. See the server repo's README.
 
+### Team Deathmatch
+
+The `team_deathmatch` gamemode splits players into two teams (Blue / Red) and
+races to a kill target. The server credits a kill to the last attacker when a
+client reports its own destruction, and restarts the round when a team reaches
+`score_limit` or `time_limit` runs out. The client shows a scoreboard (team
+scores, round timer) at the bottom of the screen, a **kill feed** top-right, and
+**respawns you automatically** a few seconds after you are shot down.
+
+The `pacific_islands.map` map runs it over an island chain: the client builds
+matching island terrain (water, beaches, runways, trees) from the server's map
+name, and switches to it when you connect.
+
 The server also ships its **pilot crew configuration** (`crew.conf`) to every
 client on connect, so a server operator can tune the pilot's g-tolerance for the
 whole server — see [Pilot g-tolerance and blackout](#pilot-g-tolerance-and-blackout).
@@ -310,6 +323,7 @@ src/
   spawn_menu.rs      pre-spawn plane selection screen
   crosshair.rs       fixed gun crosshair at screen centre
   pilot.rs           crew g-tolerance, blackout/redout, tunnel-vision overlay
+  match_client.rs    team deathmatch state: scoreboard, kill feed, respawn
 ```
 
 ## Known simplifications

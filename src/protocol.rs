@@ -12,7 +12,10 @@
 #![allow(dead_code)]
 
 /// Bump this whenever the message formats change.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
+
+/// Team index meaning "no team" (free flight and other unteamed modes).
+pub const NO_TEAM: u8 = 255;
 
 /// State of one aircraft, as broadcast in a snapshot.
 #[derive(Clone, Debug, PartialEq)]
@@ -20,6 +23,12 @@ pub struct PlayerSnapshot {
     pub id: u64,
     pub name: String,
     pub plane: String,
+    /// Team index (0/1), or [`NO_TEAM`].
+    pub team: u8,
+    /// Kills this round.
+    pub kills: u32,
+    /// Deaths this round.
+    pub deaths: u32,
     /// World position.
     pub position: [f32; 3],
     /// Orientation quaternion, `[x, y, z, w]`.
@@ -47,16 +56,20 @@ pub enum ClientMessage {
         section: u8,
         damage: f32,
     },
+    /// The local aircraft was destroyed. Team modes credit the last attacker.
+    Death,
 }
 
 /// A message sent from the server to a client.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ServerMessage {
-    /// Accepted; carries the assigned id and the map/gamemode in play.
+    /// Accepted; carries the assigned id, the map/gamemode in play, and our team
+    /// (or [`NO_TEAM`]).
     Welcome {
         id: u64,
         map: String,
         gamemode: String,
+        team: u8,
     },
     /// The planes the server has, as `(id, plane.conf text)` pairs. Sent right
     /// after [`ServerMessage::Welcome`] so clients can load every plane in use.
@@ -70,6 +83,19 @@ pub enum ServerMessage {
     Snapshot { players: Vec<PlayerSnapshot> },
     /// A player disconnected.
     PlayerLeft { id: u64 },
+    /// Team scores and round timer, for scored modes (e.g. team deathmatch).
+    Match {
+        scores: Vec<u32>,
+        score_limit: u32,
+        time_left: f32,
+    },
+    /// A player was destroyed (for the kill feed). `killer == 0` means no credit.
+    Kill {
+        killer: u64,
+        victim: u64,
+        killer_name: String,
+        victim_name: String,
+    },
     /// A player was hit (relayed to everyone but the shooter).
     Hit {
         target: u64,
@@ -200,6 +226,7 @@ impl ClientMessage {
                 section,
                 damage,
             } => format!("HIT\t{target}\t{section}\t{}", fmt3(*damage)),
+            ClientMessage::Death => "DEATH".to_string(),
         }
     }
 
@@ -244,6 +271,7 @@ impl ClientMessage {
                     damage: parse_f32(fields[3])?,
                 })
             }
+            Some("DEATH") => Ok(ClientMessage::Death),
             other => Err(ProtocolError(format!("unknown message {other:?}"))),
         }
     }
@@ -253,8 +281,13 @@ impl ServerMessage {
     /// Serialize without the trailing newline.
     pub fn to_line(&self) -> String {
         match self {
-            ServerMessage::Welcome { id, map, gamemode } => format!(
-                "WELCOME\t{id}\t{}\t{}",
+            ServerMessage::Welcome {
+                id,
+                map,
+                gamemode,
+                team,
+            } => format!(
+                "WELCOME\t{id}\t{}\t{}\t{team}",
                 sanitize_field(map),
                 sanitize_field(gamemode)
             ),
@@ -275,10 +308,13 @@ impl ServerMessage {
                 let mut out = format!("SNAPSHOT\t{}", players.len());
                 for player in players {
                     out.push_str(&format!(
-                        "\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                        "\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                         player.id,
                         sanitize_field(&player.name),
                         sanitize_field(&player.plane),
+                        player.team,
+                        player.kills,
+                        player.deaths,
                         fmt3(player.position[0]),
                         fmt3(player.position[1]),
                         fmt3(player.position[2]),
@@ -294,6 +330,28 @@ impl ServerMessage {
                 out
             }
             ServerMessage::PlayerLeft { id } => format!("PLAYER_LEFT\t{id}"),
+            ServerMessage::Match {
+                scores,
+                score_limit,
+                time_left,
+            } => {
+                let mut out = format!("MATCH\t{score_limit}\t{}", fmt3(*time_left));
+                for score in scores {
+                    out.push('\t');
+                    out.push_str(&score.to_string());
+                }
+                out
+            }
+            ServerMessage::Kill {
+                killer,
+                victim,
+                killer_name,
+                victim_name,
+            } => format!(
+                "KILL\t{killer}\t{victim}\t{}\t{}",
+                sanitize_field(killer_name),
+                sanitize_field(victim_name)
+            ),
             ServerMessage::Hit {
                 target,
                 section,
@@ -307,13 +365,16 @@ impl ServerMessage {
         let fields: Vec<&str> = line.trim_end().split('\t').collect();
         match fields.first().copied() {
             Some("WELCOME") => {
-                if fields.len() != 4 {
-                    return Err(ProtocolError("WELCOME wants 4 fields".into()));
+                if fields.len() != 5 {
+                    return Err(ProtocolError("WELCOME wants 5 fields".into()));
                 }
                 Ok(ServerMessage::Welcome {
                     id: parse_u64(fields[1])?,
                     map: fields[2].to_string(),
                     gamemode: fields[3].to_string(),
+                    team: fields[4]
+                        .parse()
+                        .map_err(|_| ProtocolError("bad team".into()))?,
                 })
             }
             Some("PLANES") => {
@@ -348,18 +409,27 @@ impl ServerMessage {
                 let mut players = Vec::with_capacity(count);
                 let mut index = 2;
                 for _ in 0..count {
-                    if fields.len() < index + 13 {
+                    if fields.len() < index + 16 {
                         return Err(ProtocolError("SNAPSHOT truncated".into()));
                     }
                     players.push(PlayerSnapshot {
                         id: parse_u64(fields[index])?,
                         name: fields[index + 1].to_string(),
                         plane: fields[index + 2].to_string(),
-                        position: parse_vec3(&fields[index + 3..index + 6])?,
-                        rotation: parse_vec4(&fields[index + 6..index + 10])?,
-                        velocity: parse_vec3(&fields[index + 10..index + 13])?,
+                        team: fields[index + 3]
+                            .parse()
+                            .map_err(|_| ProtocolError("bad team".into()))?,
+                        kills: fields[index + 4]
+                            .parse()
+                            .map_err(|_| ProtocolError("bad kills".into()))?,
+                        deaths: fields[index + 5]
+                            .parse()
+                            .map_err(|_| ProtocolError("bad deaths".into()))?,
+                        position: parse_vec3(&fields[index + 6..index + 9])?,
+                        rotation: parse_vec4(&fields[index + 9..index + 13])?,
+                        velocity: parse_vec3(&fields[index + 13..index + 16])?,
                     });
-                    index += 13;
+                    index += 16;
                 }
                 Ok(ServerMessage::Snapshot { players })
             }
@@ -369,6 +439,33 @@ impl ServerMessage {
                 }
                 Ok(ServerMessage::PlayerLeft {
                     id: parse_u64(fields[1])?,
+                })
+            }
+            Some("MATCH") => {
+                if fields.len() < 3 {
+                    return Err(ProtocolError("MATCH wants a limit and time".into()));
+                }
+                let scores = fields[3..]
+                    .iter()
+                    .map(|score| score.parse().map_err(|_| ProtocolError("bad score".into())))
+                    .collect::<Result<Vec<u32>, _>>()?;
+                Ok(ServerMessage::Match {
+                    scores,
+                    score_limit: fields[1]
+                        .parse()
+                        .map_err(|_| ProtocolError("bad score limit".into()))?,
+                    time_left: parse_f32(fields[2])?,
+                })
+            }
+            Some("KILL") => {
+                if fields.len() != 5 {
+                    return Err(ProtocolError("KILL wants 5 fields".into()));
+                }
+                Ok(ServerMessage::Kill {
+                    killer: parse_u64(fields[1])?,
+                    victim: parse_u64(fields[2])?,
+                    killer_name: fields[3].to_string(),
+                    victim_name: fields[4].to_string(),
                 })
             }
             Some("HIT") => {
@@ -422,6 +519,7 @@ mod tests {
             section: 2,
             damage: 12.0,
         });
+        round_trip_client(ClientMessage::Death);
     }
 
     #[test]
@@ -430,6 +528,7 @@ mod tests {
             id: 7,
             map: "Training".into(),
             gamemode: "free_flight".into(),
+            team: 1,
         });
         round_trip_server(ServerMessage::Snapshot {
             players: vec![
@@ -437,6 +536,9 @@ mod tests {
                     id: 1,
                     name: "A".into(),
                     plane: "F4U-4 Corsair".into(),
+                    team: 0,
+                    kills: 3,
+                    deaths: 1,
                     position: [0.0, 1000.0, 0.0],
                     rotation: [0.0, 0.0, 0.0, 1.0],
                     velocity: [0.0, 0.0, -150.0],
@@ -445,6 +547,9 @@ mod tests {
                     id: 2,
                     name: "B".into(),
                     plane: "Spitfire F Mk IXc".into(),
+                    team: NO_TEAM,
+                    kills: 0,
+                    deaths: 0,
                     position: [100.0, 1100.0, 50.0],
                     rotation: [0.0, 0.0, 0.0, 1.0],
                     velocity: [5.0, 0.0, -140.0],
@@ -452,6 +557,17 @@ mod tests {
             ],
         });
         round_trip_server(ServerMessage::PlayerLeft { id: 3 });
+        round_trip_server(ServerMessage::Match {
+            scores: vec![12, 9],
+            score_limit: 50,
+            time_left: 321.5,
+        });
+        round_trip_server(ServerMessage::Kill {
+            killer: 4,
+            victim: 7,
+            killer_name: "Red Leader".into(),
+            victim_name: "Blue Two".into(),
+        });
         round_trip_server(ServerMessage::Hit {
             target: 5,
             section: 2,

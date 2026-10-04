@@ -390,19 +390,12 @@ fn aim_controls(rotation: Quat, desired_dir: Vec3, bank: f32) -> (f32, f32, f32)
     (pitch, roll, yaw)
 }
 
-/// Put the aircraft back in the air at the start position.
-fn reset_aircraft(
-    keys: Res<ButtonInput<KeyCode>>,
-    bindings: Res<Bindings>,
-    menu: Res<GameMenu>,
-    mut query: Query<(&mut Transform, &mut Aircraft), With<PlayerControlled>>,
+/// Put the aircraft back in the air at the start position, fully repaired.
+pub(crate) fn respawn(
+    transform: &mut Transform,
+    aircraft: &mut Aircraft,
+    damage: &mut DamageModel,
 ) {
-    if menu.open || !bindings.just_pressed(&keys, RESET) {
-        return;
-    }
-    let Ok((mut transform, mut aircraft)) = query.single_mut() else {
-        return;
-    };
     *transform = Transform::from_translation(START_POSITION);
     aircraft.velocity = Vec3::NEG_Z * aircraft.spec.cruise_speed;
     aircraft.angular_velocity = Vec3::ZERO;
@@ -418,6 +411,23 @@ fn reset_aircraft(
     aircraft.stamina = 1.0;
     aircraft.ammo = aircraft.spec.guns.iter().map(|gun| gun.ammo).collect();
     aircraft.fire_timer = vec![0.0; aircraft.spec.guns.len()];
+    damage.repair_all();
+}
+
+/// Put the aircraft back in the air at the start position.
+fn reset_aircraft(
+    keys: Res<ButtonInput<KeyCode>>,
+    bindings: Res<Bindings>,
+    menu: Res<GameMenu>,
+    mut query: Query<(&mut Transform, &mut Aircraft, &mut DamageModel), With<PlayerControlled>>,
+) {
+    if menu.open || !bindings.just_pressed(&keys, RESET) {
+        return;
+    }
+    let Ok((mut transform, mut aircraft, mut damage)) = query.single_mut() else {
+        return;
+    };
+    respawn(&mut transform, &mut aircraft, &mut damage);
 }
 
 /// Integrates the equations of motion for every player-controlled aircraft.

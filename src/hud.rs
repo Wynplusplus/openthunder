@@ -18,6 +18,12 @@ use crate::pilot::CrewSkills;
 #[derive(Component)]
 struct HudText;
 
+#[derive(Component)]
+struct MatchText;
+
+#[derive(Component)]
+struct KillFeedText;
+
 pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
@@ -43,6 +49,43 @@ fn spawn_hud(mut commands: Commands) {
         TextColor(Color::srgb(0.85, 1.0, 0.85)),
         HudText,
     ));
+
+    // Team scoreboard, centred along the bottom.
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: px(16.0),
+            width: percent(100.0),
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        Text::new(""),
+        TextFont {
+            font_size: FontSize::Px(22.0),
+            ..default()
+        },
+        TextLayout::justify(Justify::Center),
+        TextColor(Color::srgb(1.0, 1.0, 1.0)),
+        MatchText,
+    ));
+
+    // Kill feed, top right.
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            top: px(10.0),
+            right: px(12.0),
+            ..default()
+        },
+        Text::new(""),
+        TextFont {
+            font_size: FontSize::Px(16.0),
+            ..default()
+        },
+        TextLayout::justify(Justify::Right),
+        TextColor(Color::srgb(1.0, 0.85, 0.55)),
+        KillFeedText,
+    ));
 }
 
 fn update_hud(
@@ -50,9 +93,52 @@ fn update_hud(
     client: Res<NetClient>,
     crew: Res<CrewSkills>,
     feedback: Res<CombatFeedback>,
+    match_state: Res<crate::match_client::MatchClient>,
     aircraft: Query<(&Aircraft, &Transform, &DamageModel), With<PlayerControlled>>,
-    mut hud: Query<&mut Text, With<HudText>>,
+    mut hud: Query<&mut Text, (With<HudText>, Without<MatchText>, Without<KillFeedText>)>,
+    mut match_text: Query<&mut Text, (With<MatchText>, Without<KillFeedText>)>,
+    mut feed_text: Query<&mut Text, With<KillFeedText>>,
 ) {
+    // The scoreboard and kill feed update even before we have spawned.
+    if let Ok(mut text) = match_text.single_mut() {
+        if match_state.is_team_mode() {
+            let scores = match_state
+                .scores
+                .iter()
+                .enumerate()
+                .map(|(index, score)| {
+                    format!(
+                        "{} {score}",
+                        crate::match_client::MatchClient::team_name(index as u8)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("   -   ");
+            let minutes = (match_state.time_left / 60.0).floor() as u32;
+            let seconds = (match_state.time_left % 60.0).floor() as u32;
+            let down = if match_state.respawn_in() > 0.0 {
+                format!("   DOWN — respawn in {:.1}s", match_state.respawn_in())
+            } else {
+                String::new()
+            };
+            **text = format!(
+                "TEAM DEATHMATCH   {scores}   (first to {})   {minutes:02}:{seconds:02}{down}",
+                match_state.score_limit
+            );
+        } else {
+            **text = String::new();
+        }
+    }
+    if let Ok(mut text) = feed_text.single_mut() {
+        **text = match_state
+            .kill_feed
+            .iter()
+            .rev()
+            .map(|entry| entry.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+
     let Ok((aircraft, transform, damage)) = aircraft.single() else {
         return;
     };

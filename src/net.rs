@@ -164,7 +164,10 @@ fn connect_thread(
                 let Ok(line) = line else { break };
                 match ServerMessage::parse(&line) {
                     Ok(message) => {
-                        if let ServerMessage::Welcome { id, map, gamemode } = &message {
+                        if let ServerMessage::Welcome {
+                            id, map, gamemode, ..
+                        } = &message
+                        {
                             *status.lock().unwrap() = ConnectionStatus::Connected {
                                 id: *id,
                                 map: map.clone(),
@@ -236,6 +239,7 @@ fn receive_snapshots(
     mut commands: Commands,
     client: Res<NetClient>,
     mut crew: ResMut<CrewSkills>,
+    mut match_state: ResMut<crate::match_client::MatchClient>,
     mut registry: ResMut<AircraftRegistry>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -252,6 +256,12 @@ fn receive_snapshots(
     loop {
         match incoming.try_recv() {
             Ok(ServerMessage::Snapshot { players }) => {
+                if let Some(id) = local_id {
+                    if let Some(me) = players.iter().find(|player| player.id == id) {
+                        match_state.kills = me.kills;
+                        match_state.deaths = me.deaths;
+                    }
+                }
                 apply_snapshot(
                     &mut commands,
                     &registry,
@@ -320,6 +330,33 @@ fn receive_snapshots(
                     "[net] applied server crew config: pilot tolerates {:.1} g / {:.1} g",
                     crew.g_tolerance, crew.negative_g_tolerance
                 );
+            }
+            Ok(ServerMessage::Welcome { team, .. }) => {
+                match_state.team = team;
+            }
+            Ok(ServerMessage::Match {
+                scores,
+                score_limit,
+                time_left,
+            }) => {
+                match_state.scores = scores;
+                match_state.score_limit = score_limit;
+                match_state.time_left = time_left;
+            }
+            Ok(ServerMessage::Kill {
+                killer,
+                victim,
+                killer_name,
+                victim_name,
+            }) => {
+                let text = if Some(killer) == local_id {
+                    format!("You destroyed {victim_name}")
+                } else if Some(victim) == local_id {
+                    format!("{killer_name} destroyed you")
+                } else {
+                    format!("{killer_name} destroyed {victim_name}")
+                };
+                match_state.push_kill(text);
             }
             Ok(_) => {}
             Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,

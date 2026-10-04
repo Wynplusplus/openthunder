@@ -12,6 +12,7 @@ mod crosshair;
 mod damage;
 mod flight;
 mod hud;
+mod match_client;
 mod menu;
 mod net;
 mod pilot;
@@ -62,6 +63,7 @@ fn main() {
             spawn_menu::SpawnMenuPlugin,
             crosshair::CrosshairPlugin,
             pilot::PilotPlugin,
+            match_client::MatchClientPlugin,
         ))
         .run();
 }
