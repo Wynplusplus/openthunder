@@ -289,19 +289,14 @@ fn spawn_plane_targets(
     spec.body_color = Color::srgb(0.52, 0.46, 0.20);
 
     let orbits = [
-        (Vec3::new(0.0, ground + 1200.0, -900.0), 700.0, 110.0, 1.0),
+        (Vec3::new(0.0, ground + 450.0, -900.0), 700.0, 110.0, 1.0),
         (
-            Vec3::new(700.0, ground + 1500.0, -1500.0),
+            Vec3::new(700.0, ground + 650.0, -1500.0),
             500.0,
             100.0,
             -1.0,
         ),
-        (
-            Vec3::new(-700.0, ground + 1000.0, -300.0),
-            600.0,
-            120.0,
-            1.0,
-        ),
+        (Vec3::new(-700.0, ground + 350.0, -300.0), 600.0, 120.0, 1.0),
     ];
 
     let mut count = 0;
