@@ -16,8 +16,10 @@ Right now it contains only what is needed to *fly around a simple map*:
 - **Multiplayer** on a dedicated server (see the companion
   [openthunder_server](https://github.com/Wynplusplus/openthunder_server) repo):
   pick a server in the launcher and fly with others.
+- **Combat**: projectile guns with ballistic tracers, swept hit detection, and a
+  per-section damage model.
 
-There is **no combat yet**.
+There are no AI opponents or match objectives yet.
 
 ---
 
@@ -106,6 +108,7 @@ Defaults — all of these can be changed in the launcher:
 | `1` / `2` / `3`  | Apply test damage: left wing / engine / tail |
 | `0`              | Repair everything                        |
 | `C`              | Free look (hold to orbit the camera)     |
+| `Space` / LMB    | Fire guns                                |
 | `Esc`            | In-game menu (Resume / Quit to Desktop)  |
 
 Move the mouse once to "engage" mouse aim. From then on the aircraft points
@@ -192,6 +195,24 @@ Each has its own mass, wing area/span, power, lift/drag coefficients, control
 rates, stability and damping, so they fly differently: the Corsair is fast and
 rolls hard, the Bf 109 climbs and zooms but stiffens up at speed, and the
 Spitfire turns and climbs best at low speed.
+
+## Combat
+
+Implemented in `src/combat.rs`.
+
+- Each aircraft has data-driven **guns** (`GunSpec`: caliber, rate of fire,
+  muzzle velocity, damage, spread, muzzle positions, ammo) — 6× .50 cal for the
+  Corsair, a 20 mm + 2× 13 mm for the Bf 109, 4× 20 mm Hispanos for the Spitfire.
+- Fire with the **left mouse button** or **`Space`**. Rounds are **ballistic
+  projectiles**: they inherit the aircraft's velocity plus muzzle velocity, then
+  fall under gravity and lose speed to drag, drawn as glowing tracers.
+- Hit detection is **swept** (segment vs. oriented box) so fast rounds cannot
+  tunnel through a target.
+- A hit is classified to a section by where it landed (wing / engine / tail /
+  fuselage) and damages that section's `DamageModel`, which the flight model then
+  reads.
+- A destroyed fuselage finishes the aircraft: no thrust, no control, heavy drag.
+- The HUD shows remaining ammo, the armament and hit markers.
 
 ## Damage model
 

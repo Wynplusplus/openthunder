@@ -19,6 +19,7 @@ use openthunder::protocol::{ClientMessage, PlayerSnapshot, ServerMessage};
 use openthunder::settings::Settings;
 
 use crate::aircraft::{Aircraft, AircraftRegistry, PlayerControlled, spawn_aircraft_model};
+use crate::damage::DamageModel;
 
 /// How often the local state is sent to the server.
 const SEND_HZ: f32 = 15.0;
@@ -318,6 +319,7 @@ fn apply_snapshot(
                         target_position: position,
                         target_rotation: rotation,
                     },
+                    DamageModel::new(spec.max_health),
                 ))
                 .id();
             spawn_aircraft_model(commands, meshes, materials, &spec, root);

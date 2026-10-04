@@ -404,6 +404,8 @@ fn reset_aircraft(
     aircraft.flaps = FlapSetting::Up;
     aircraft.flap_position = 0.0;
     aircraft.trim_alpha = aircraft.spec.trim_alpha;
+    aircraft.ammo = aircraft.spec.guns.iter().map(|gun| gun.ammo).collect();
+    aircraft.fire_timer = vec![0.0; aircraft.spec.guns.len()];
 }
 
 /// Integrates the equations of motion for every player-controlled aircraft.
@@ -431,6 +433,12 @@ fn flight_dynamics(
 
     // --- Damage effects ---
     let engine_health = damage.integrity(AircraftPart::Engine);
+    // A destroyed fuselage means the airframe is finished: no thrust, no
+    // control, and a lot of drag, so it goes down like in War Thunder.
+    let destroyed = damage.is_destroyed(AircraftPart::Fuselage);
+    if destroyed {
+        aircraft.controls = Controls::default();
+    }
     let wing_health = 0.5
         * (damage.integrity(AircraftPart::LeftWing) + damage.integrity(AircraftPart::RightWing));
     let tail_health = damage.integrity(AircraftPart::Tail);
@@ -485,7 +493,11 @@ fn flight_dynamics(
     } else {
         0.0
     };
-    let cd = spec.cd0 + induced_drag + spec.cd_flap * flap + mach_drag;
+    let cd = spec.cd0
+        + induced_drag
+        + spec.cd_flap * flap
+        + mach_drag
+        + if destroyed { 0.6 } else { 0.0 };
     let dynamic_pressure = 0.5 * air_density * speed * speed;
 
     // --- Engine: power falls off above the critical altitude; WEP adds thrust ---
@@ -495,7 +507,11 @@ fn flight_dynamics(
     } else {
         1.0
     };
-    let available_power = spec.max_power * power_factor * wep_factor * engine_health;
+    let available_power = spec.max_power
+        * power_factor
+        * wep_factor
+        * engine_health
+        * if destroyed { 0.0 } else { 1.0 };
     // Propeller thrust: power / speed, capped at the static-thrust figure.
     let thrust_power = spec.prop_efficiency * available_power / speed.max(25.0);
     let thrust = forward * (aircraft.throttle * thrust_power.min(spec.static_thrust));

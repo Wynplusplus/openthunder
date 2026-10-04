@@ -17,6 +17,25 @@ use openthunder::settings::Settings;
 
 use crate::damage::DamageModel;
 
+/// A gun group: one or more muzzles firing the same round.
+#[derive(Clone, Debug)]
+pub struct GunSpec {
+    pub name: &'static str,
+    pub caliber_mm: f32,
+    /// Rounds per second, per muzzle.
+    pub rounds_per_second: f32,
+    /// Muzzle velocity, m/s.
+    pub muzzle_velocity: f32,
+    /// Damage applied to a hit section.
+    pub damage: f32,
+    /// Cone of fire, radians.
+    pub spread: f32,
+    /// Muzzle positions in the aircraft's local frame.
+    pub muzzles: Vec<Vec3>,
+    /// Total rounds carried (shared across this gun's muzzles).
+    pub ammo: u32,
+}
+
 /// Physical + aerodynamic description of an aircraft type.
 ///
 /// Units are SI unless noted: metres, kilograms, newtons, watts, seconds, radians.
@@ -105,6 +124,10 @@ pub struct AircraftSpec {
     // --- Damage ---
     /// Hit points given to every section.
     pub max_health: f32,
+
+    // --- Armament ---
+    /// Offensive guns.
+    pub guns: Vec<GunSpec>,
 
     // --- Looks ---
     pub body_color: Color,
@@ -212,6 +235,11 @@ pub struct Aircraft {
     /// Instructor pitch trim: the angle of attack held when hands-off.
     pub trim_alpha: f32,
 
+    /// Remaining rounds per gun (see `spec.guns`).
+    pub ammo: Vec<u32>,
+    /// Time until each gun can fire again, seconds.
+    pub fire_timer: Vec<f32>,
+
     // --- Derived, refreshed every physics step (used by the HUD) ---
     pub airspeed: f32,
     /// Indicated airspeed, m/s.
@@ -227,6 +255,8 @@ pub struct Aircraft {
 impl Aircraft {
     pub fn new(spec: AircraftSpec) -> Self {
         let trim_alpha = spec.trim_alpha;
+        let ammo = spec.guns.iter().map(|gun| gun.ammo).collect();
+        let fire_timer = vec![0.0; spec.guns.len()];
         Self {
             spec,
             velocity: Vec3::ZERO,
@@ -238,6 +268,8 @@ impl Aircraft {
             flaps: FlapSetting::Up,
             flap_position: 0.0,
             trim_alpha,
+            ammo,
+            fire_timer,
             airspeed: 0.0,
             ias: 0.0,
             alpha: 0.0,
@@ -317,6 +349,24 @@ pub fn f4u_4_corsair() -> AircraftSpec {
 
         max_health: 100.0,
 
+        guns: vec![GunSpec {
+            name: "M2 Browning",
+            caliber_mm: 12.7,
+            rounds_per_second: 12.5,
+            muzzle_velocity: 870.0,
+            damage: 3.0,
+            spread: 0.0035,
+            muzzles: vec![
+                Vec3::new(-1.9, -0.05, -0.9),
+                Vec3::new(-2.7, -0.05, -0.9),
+                Vec3::new(-3.5, -0.05, -0.9),
+                Vec3::new(1.9, -0.05, -0.9),
+                Vec3::new(2.7, -0.05, -0.9),
+                Vec3::new(3.5, -0.05, -0.9),
+            ],
+            ammo: 2350,
+        }],
+
         body_color: Color::srgb(0.13, 0.19, 0.42), // US Navy dark blue
     }
 }
@@ -367,6 +417,29 @@ pub fn bf109_g6() -> AircraftSpec {
         flap_speed_limits: [438.0 / 3.6, 409.0 / 3.6, 260.0 / 3.6],
 
         max_health: 100.0,
+
+        guns: vec![
+            GunSpec {
+                name: "MG 151/20",
+                caliber_mm: 20.0,
+                rounds_per_second: 11.7,
+                muzzle_velocity: 800.0,
+                damage: 12.0,
+                spread: 0.003,
+                muzzles: vec![Vec3::new(0.0, -0.05, -4.15)],
+                ammo: 200,
+            },
+            GunSpec {
+                name: "MG 131",
+                caliber_mm: 13.0,
+                rounds_per_second: 15.0,
+                muzzle_velocity: 800.0,
+                damage: 5.0,
+                spread: 0.003,
+                muzzles: vec![Vec3::new(-0.4, 0.35, -3.4), Vec3::new(0.4, 0.35, -3.4)],
+                ammo: 600,
+            },
+        ],
 
         body_color: Color::srgb(0.44, 0.46, 0.43), // Luftwaffe grey
     }
@@ -419,6 +492,22 @@ pub fn spitfire_mk9() -> AircraftSpec {
         flap_speed_limits: [260.0 / 3.6, 260.0 / 3.6, 260.0 / 3.6],
 
         max_health: 100.0,
+
+        guns: vec![GunSpec {
+            name: "Hispano Mk II",
+            caliber_mm: 20.0,
+            rounds_per_second: 10.0,
+            muzzle_velocity: 880.0,
+            damage: 12.0,
+            spread: 0.003,
+            muzzles: vec![
+                Vec3::new(-2.9, -0.05, -1.0),
+                Vec3::new(-2.1, -0.05, -1.0),
+                Vec3::new(2.9, -0.05, -1.0),
+                Vec3::new(2.1, -0.05, -1.0),
+            ],
+            ammo: 480,
+        }],
 
         body_color: Color::srgb(0.24, 0.30, 0.20), // RAF dark green
     }

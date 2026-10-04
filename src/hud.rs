@@ -3,12 +3,13 @@
 use bevy::prelude::*;
 
 use openthunder::keybinds::{
-    DAMAGE_ENGINE, DAMAGE_LEFT_WING, DAMAGE_TAIL, FLAPS_DOWN, FLAPS_UP, FREE_LOOK, PITCH_DOWN,
-    PITCH_DOWN_ALT, PITCH_UP, PITCH_UP_ALT, REPAIR, RESET, ROLL_LEFT, ROLL_RIGHT, THROTTLE_DOWN,
-    THROTTLE_UP, WEP, YAW_LEFT, YAW_RIGHT, key_display,
+    DAMAGE_ENGINE, DAMAGE_LEFT_WING, DAMAGE_TAIL, FIRE, FLAPS_DOWN, FLAPS_UP, FREE_LOOK,
+    PITCH_DOWN, PITCH_DOWN_ALT, PITCH_UP, PITCH_UP_ALT, REPAIR, RESET, ROLL_LEFT, ROLL_RIGHT,
+    THROTTLE_DOWN, THROTTLE_UP, WEP, YAW_LEFT, YAW_RIGHT, key_display,
 };
 
 use crate::aircraft::{Aircraft, PlayerControlled};
+use crate::combat::CombatFeedback;
 use crate::damage::{AircraftPart, DamageModel};
 use crate::flight::Bindings;
 use crate::net::NetClient;
@@ -46,6 +47,7 @@ fn spawn_hud(mut commands: Commands) {
 fn update_hud(
     bindings: Res<Bindings>,
     client: Res<NetClient>,
+    feedback: Res<CombatFeedback>,
     aircraft: Query<(&Aircraft, &Transform, &DamageModel), With<PlayerControlled>>,
     mut hud: Query<&mut Text, With<HudText>>,
 ) {
@@ -56,6 +58,22 @@ fn update_hud(
         return;
     };
     let connection = client.status.lock().unwrap().label();
+
+    let ammo: u32 = aircraft.ammo.iter().sum();
+    let guns = aircraft
+        .spec
+        .guns
+        .iter()
+        .map(|gun| format!("{}x {} {}mm", gun.muzzles.len(), gun.name, gun.caliber_mm))
+        .collect::<Vec<_>>()
+        .join(" + ");
+    let hit_marker = if feedback.player_hit > 0.0 {
+        "   << HIT TAKEN >>"
+    } else if feedback.enemy_hit > 0.0 {
+        "   < HIT >"
+    } else {
+        ""
+    };
 
     let speed_kmh = aircraft.airspeed * 3.6;
     let ias_kmh = aircraft.ias * 3.6;
@@ -88,12 +106,17 @@ fn update_hud(
          TAS {speed:5.0} km/h   IAS {ias:5.0} km/h   Alt {alt:6.0} m\n\
          Throttle {thr:3.0}% {wep}   AoA {alpha:+5.1} deg   G {g:.1}\n\
          Flaps {flaps}   Wing {wing:3.0}%   Engine {eng:3.0}%   Tail {tail:3.0}%   {status}\n\
+         Ammo {ammo}   {guns}{hit_marker}\n\
          \n\
-         Mouse: aim   {pitch_up}/{pitch_down}/{pitch_up_alt}/{pitch_down_alt}: pitch   {roll_left}/{roll_right}: roll   {yaw_left}/{yaw_right}: rudder\n\
+         Mouse: aim   {fire_key}: fire   {pitch_up}/{pitch_down}/{pitch_up_alt}/{pitch_down_alt}: pitch   {roll_left}/{roll_right}: roll   {yaw_left}/{yaw_right}: rudder\n\
          {throttle_up}/{throttle_down}: throttle   {wep_key}: WEP   {flaps_down}/{flaps_up}: flaps   {reset}: respawn\n\
          {dmg_wing}/{dmg_engine}/{dmg_tail}: damage   {repair}: repair   {free_look}: free look   Esc: menu",
         name = aircraft.spec.name,
         connection = connection,
+        ammo = ammo,
+        guns = guns,
+        hit_marker = hit_marker,
+        fire_key = key_display(bindings.name(FIRE)),
         speed = speed_kmh,
         ias = ias_kmh,
         alt = altitude,

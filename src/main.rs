@@ -7,6 +7,7 @@
 
 mod aircraft;
 mod camera;
+mod combat;
 mod damage;
 mod flight;
 mod hud;
@@ -54,6 +55,7 @@ fn main() {
             hud::HudPlugin,
             menu::GameMenuPlugin,
             net::NetPlugin,
+            combat::CombatPlugin,
         ))
         .run();
 }
