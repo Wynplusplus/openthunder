@@ -1,0 +1,59 @@
+[package]
+name = "openthunder"
+version = "0.1.0"
+edition = "2024"
+description = "An unofficial, open-source War Thunder Air-RB-style flight prototype built with Bevy."
+license = "GPL-3.0-or-later"
+# With two binaries (game + launcher), tell cargo which one `cargo run` uses.
+default-run = "openthunder"
+
+[dependencies]
+# Bevy 0.19. We use an explicit feature list instead of the `3d`/`ui` umbrella
+# features so that we can drop `bevy_gilrs` (gamepad support). gilrs needs the
+# system `libudev` development package, which is not required for this prototype.
+bevy = { version = "0.19", default-features = false, features = [
+    # core app
+    "std",
+    "async_executor",
+    "bevy_asset",
+    "bevy_log",
+    "bevy_state",
+    "reflect_auto_register",
+    # windowing / platform
+    "bevy_winit",
+    "bevy_clipboard",
+    "default_font",
+    "multi_threaded",
+    "webgl2",
+    "x11",
+    "wayland",
+    "custom_cursor",
+    "sysinfo_plugin",
+    # 3D rendering
+    "bevy_light",
+    "bevy_pbr",
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_mikktspace",
+    "hdr",
+    "png",
+    "ktx2",
+    "zstd_rust",
+    "tonemapping_luts",
+    # UI + text (HUD)
+    "bevy_text",
+    "bevy_ui",
+    "bevy_ui_render",
+    "bevy_input_focus",
+] }
+
+# Used by the TUI launcher for raw terminal mode and terminal sizing.
+libc = "0.2"
+
+# Bevy is extremely slow in a fully unoptimized debug build. Optimize the
+# dependencies while keeping our own crate fast to recompile.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
