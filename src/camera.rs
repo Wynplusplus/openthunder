@@ -48,7 +48,13 @@ impl Plugin for ChaseCameraPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<FreeLook>()
             .add_systems(Startup, spawn_camera)
-            .add_systems(Update, (free_look_input, chase_camera));
+            .add_systems(
+                Update,
+                (
+                    free_look_input,
+                    chase_camera.after(crate::flight::FlightSet),
+                ),
+            );
     }
 }
 

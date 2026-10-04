@@ -145,6 +145,11 @@ pub struct MouseAim {
     pub engaged: bool,
 }
 
+/// System set for the flight simulation. Other systems (such as the camera) can
+/// order themselves after it so they see the aircraft's final transform.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FlightSet;
+
 pub struct FlightPlugin;
 
 impl Plugin for FlightPlugin {
@@ -158,7 +163,8 @@ impl Plugin for FlightPlugin {
                     read_player_input,
                     reset_aircraft,
                     flight_dynamics.after(read_player_input),
-                ),
+                )
+                    .in_set(FlightSet),
             );
     }
 }

@@ -542,7 +542,8 @@ pub fn spawn_aircraft_model(
     let tailplane = meshes.add(Cuboid::new(3.4, 0.18, 1.0));
     let fin = meshes.add(Cuboid::new(0.18, 1.4, 1.2));
     let canopy = meshes.add(Sphere::new(0.55));
-    let propeller = meshes.add(Cuboid::new(0.14, 3.0, 0.12));
+    let blade = meshes.add(Cuboid::new(0.10, 1.5, 0.10));
+    let spinner = meshes.add(Sphere::new(0.22));
 
     commands.entity(root).with_children(|parent| {
         parent.spawn((
@@ -570,12 +571,31 @@ pub fn spawn_aircraft_model(
             MeshMaterial3d(glass),
             Transform::from_xyz(0.0, 0.7, -1.4),
         ));
-        parent.spawn((
-            Mesh3d(propeller),
-            MeshMaterial3d(dark),
-            Transform::from_xyz(0.0, 0.0, -4.2),
-            Propeller { angle: 0.0 },
-        ));
+        parent
+            .spawn((
+                Transform::from_xyz(0.0, 0.0, -4.2),
+                Visibility::default(),
+                Propeller { angle: 0.0 },
+            ))
+            .with_children(|hub| {
+                // Spinner cone in the middle of the propeller.
+                hub.spawn((
+                    Mesh3d(spinner.clone()),
+                    MeshMaterial3d(dark.clone()),
+                    Transform::default(),
+                ));
+                // Three blades radiating from the hub.
+                for index in 0..3 {
+                    let rotation =
+                        Quat::from_rotation_z(index as f32 * std::f32::consts::TAU / 3.0);
+                    hub.spawn((
+                        Mesh3d(blade.clone()),
+                        MeshMaterial3d(dark.clone()),
+                        Transform::from_rotation(rotation)
+                            .with_translation(rotation * Vec3::new(0.0, 0.75, 0.0)),
+                    ));
+                }
+            });
     });
 }
 
@@ -588,7 +608,9 @@ fn spin_propellers(
     let throttle = player.single().map(|ac| ac.throttle).unwrap_or(0.0);
     let spin_rate = 30.0 + throttle * 80.0; // rad/s (purely cosmetic)
     for (mut transform, mut propeller) in &mut propellers {
-        propeller.angle += spin_rate * time.delta_secs();
+        // Wrap the angle so it never loses precision during long flights.
+        propeller.angle =
+            (propeller.angle + spin_rate * time.delta_secs()).rem_euclid(std::f32::consts::TAU);
         transform.rotation = Quat::from_rotation_z(propeller.angle);
     }
 }
