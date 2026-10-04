@@ -12,6 +12,9 @@
 
 use bevy::prelude::*;
 
+use openthunder::planes;
+use openthunder::settings::Settings;
+
 use crate::damage::DamageModel;
 
 /// Physical + aerodynamic description of an aircraft type.
@@ -318,13 +321,116 @@ pub fn f4u_4_corsair() -> AircraftSpec {
     }
 }
 
+/// Messerschmitt Bf 109 G-6. Data sheet: DB-605AM, ~669 km/h at 5,500 m,
+/// ~19.6 m/s climb, 20 s turn, +13/-6 g, 790 km/h IAS redline.
+pub fn bf109_g6() -> AircraftSpec {
+    AircraftSpec {
+        name: "Bf 109 G-6",
+
+        mass: 3_150.0,
+        wing_area: 16.1,
+        wing_span: 9.9,
+
+        max_power: 1_100_000.0,
+        static_thrust: 13_000.0,
+        prop_efficiency: 0.80,
+        wep_multiplier: 1.12, // MW-50
+        critical_altitude: 5_800.0,
+        altitude_power_falloff: 5_000.0,
+
+        cl_slope: 4.5,
+        cl_max: 1.4,
+        stall_aoa: 0.28,
+        cd0: 0.027,
+        oswald: 0.80,
+        cl_flap: 0.5,
+        cd_flap: 0.08,
+
+        trim_alpha: 0.035,
+        pitch_rate: 1.2,
+        yaw_rate: 0.5,
+        roll_rate: 2.5,
+        pitch_stability: 2.2,
+        yaw_stability: 3.0,
+        control_ref_speed: 120.0,
+        responsiveness: 6.0,
+        pitch_damping: 0.0,
+        yaw_damping: 0.0,
+        roll_damping: 2.0,
+        cruise_speed: 150.0,
+
+        stiffening_onset_ias: 150.0,
+        stiffening_mach: 0.78,
+        max_ias: 790.0 / 3.6,
+        g_limit: 13.0,
+        prop_torque: 0.4,
+        flap_speed_limits: [438.0 / 3.6, 409.0 / 3.6, 260.0 / 3.6],
+
+        max_health: 100.0,
+
+        body_color: Color::srgb(0.44, 0.46, 0.43), // Luftwaffe grey
+    }
+}
+
+/// Supermarine Spitfire F Mk IXc. Data sheet: Merlin-61, ~642 km/h at 8,537 m,
+/// ~18.9 m/s climb, 17.2 s turn, +10/-5 g, 774 km/h IAS redline.
+pub fn spitfire_mk9() -> AircraftSpec {
+    AircraftSpec {
+        name: "Spitfire F Mk IXc",
+
+        mass: 3_400.0,
+        wing_area: 22.48,
+        wing_span: 11.23,
+
+        max_power: 1_167_000.0,
+        static_thrust: 13_000.0,
+        prop_efficiency: 0.82,
+        wep_multiplier: 1.15,
+        critical_altitude: 6_500.0,
+        altitude_power_falloff: 6_000.0,
+
+        cl_slope: 4.5,
+        cl_max: 1.5, // elliptical wing
+        stall_aoa: 0.28,
+        cd0: 0.025,
+        oswald: 0.85, // elliptical wing -> high span efficiency
+        cl_flap: 0.55,
+        cd_flap: 0.09,
+
+        trim_alpha: 0.029,
+        pitch_rate: 1.3,
+        yaw_rate: 0.55,
+        roll_rate: 2.6,
+        pitch_stability: 2.2,
+        yaw_stability: 3.0,
+        control_ref_speed: 115.0,
+        responsiveness: 6.5,
+        pitch_damping: 0.0,
+        yaw_damping: 0.0,
+        roll_damping: 2.0,
+        cruise_speed: 145.0,
+
+        stiffening_onset_ias: 145.0,
+        stiffening_mach: 0.80,
+        max_ias: 774.0 / 3.6,
+        g_limit: 10.0,
+        prop_torque: 0.3,
+        // The Mk IX had a single flap position; use the same limit for all.
+        flap_speed_limits: [260.0 / 3.6, 260.0 / 3.6, 260.0 / 3.6],
+
+        max_health: 100.0,
+
+        body_color: Color::srgb(0.24, 0.30, 0.20), // RAF dark green
+    }
+}
+
 pub struct AircraftPlugin;
 
 impl Plugin for AircraftPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(AircraftRegistry {
-            // Add new aircraft types here.
-            specs: vec![f4u_4_corsair()],
+            // Add new aircraft types here (and to `openthunder::planes::PLANES`).
+            specs: vec![f4u_4_corsair(), bf109_g6(), spitfire_mk9()],
         })
         .add_systems(Startup, (log_aircraft_types, spawn_player_aircraft))
         .add_systems(Update, spin_propellers);
@@ -342,10 +448,16 @@ fn spawn_player_aircraft(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    // Aircraft is chosen by `--plane <id>` on the command line (used by the
+    // launcher), otherwise by the saved settings, otherwise the default.
+    let requested = plane_arg().unwrap_or_else(|| Settings::load_or_create().plane);
+
     let spec = registry
-        .get("F4U-4 Corsair")
-        .expect("F4U-4 Corsair spec must be registered")
+        .get(requested.as_str())
+        .or_else(|| registry.get(planes::default_plane()))
+        .expect("the default aircraft spec must be registered")
         .clone();
+    info!("Flying: {}", spec.name);
 
     let mut aircraft = Aircraft::new(spec);
     // Start already flying so the player is immediately airborne.
@@ -359,6 +471,14 @@ fn spawn_player_aircraft(
         Transform::from_translation(START_POSITION),
     );
     commands.entity(entity).insert(PlayerControlled);
+}
+
+/// Reads `--plane <id>` from the command line, if present.
+fn plane_arg() -> Option<String> {
+    let args: Vec<String> = std::env::args().collect();
+    args.iter()
+        .position(|arg| arg == "--plane")
+        .and_then(|index| args.get(index + 1).cloned())
 }
 
 /// Spawns an aircraft (root entity + visual children) and returns the root.
@@ -458,5 +578,46 @@ fn spin_propellers(
     for (mut transform, mut propeller) in &mut propellers {
         propeller.angle += spin_rate * time.delta_secs();
         transform.rotation = Quat::from_rotation_z(propeller.angle);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use openthunder::planes::PLANES;
+
+    /// Every plane offered by the launcher must have a spec in the game registry,
+    /// and vice versa.
+    #[test]
+    fn registry_matches_plane_list() {
+        let specs = vec![f4u_4_corsair(), bf109_g6(), spitfire_mk9()];
+        let registry = AircraftRegistry {
+            specs: specs.clone(),
+        };
+        for plane in PLANES {
+            assert!(
+                registry.get(plane.id).is_some(),
+                "PLANES lists '{}' but the registry has no spec for it",
+                plane.id
+            );
+        }
+        assert_eq!(specs.len(), PLANES.len(), "registry/PLANES length mismatch");
+    }
+
+    /// Sanity-check that each aircraft's numbers are physically reasonable.
+    #[test]
+    fn aircraft_specs_are_sane() {
+        for spec in [f4u_4_corsair(), bf109_g6(), spitfire_mk9()] {
+            assert!(spec.mass > 2_000.0 && spec.mass < 8_000.0, "{}", spec.name);
+            assert!(spec.max_power > 500_000.0, "{}", spec.name);
+            assert!(spec.g_limit >= 8.0, "{}", spec.name);
+            assert!(spec.max_ias > 150.0, "{}", spec.name);
+            assert!(
+                spec.flap_speed_limits[0] >= spec.flap_speed_limits[1]
+                    && spec.flap_speed_limits[1] >= spec.flap_speed_limits[2],
+                "{}",
+                spec.name
+            );
+        }
     }
 }

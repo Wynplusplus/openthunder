@@ -11,6 +11,8 @@ use std::io::{self, Write};
 use std::process::Command;
 
 use openthunder::keybinds::{self, ACTIONS, Keybinds, SUPPORTED_KEYS};
+use openthunder::planes;
+use openthunder::settings::Settings;
 
 // ---------------------------------------------------------------------------
 // Terminal handling (raw mode via libc; no external TUI crate required)
@@ -194,9 +196,10 @@ fn render(lines: &[String]) {
     let _ = io::stdout().flush();
 }
 
-fn menu_lines(selected: usize, status: &str) -> Vec<String> {
+fn menu_lines(selected: usize, status: &str, plane: &str) -> Vec<String> {
     let items = [
         "Launch game",
+        "Select aircraft",
         "Edit keybinds",
         "Reset keybinds to defaults",
         "Quit",
@@ -204,6 +207,7 @@ fn menu_lines(selected: usize, status: &str) -> Vec<String> {
     let mut lines = vec![
         String::new(),
         "  \x1b[1;36mOpenThunder\x1b[0m  -  War Thunder Air RB prototype".to_string(),
+        format!("  \x1b[2mAircraft: {plane}\x1b[0m"),
         "  \x1b[2mUp/Down to move, Enter to select\x1b[0m".to_string(),
         String::new(),
     ];
@@ -223,6 +227,35 @@ fn menu_lines(selected: usize, status: &str) -> Vec<String> {
         "  \x1b[2mConfig: {}\x1b[0m",
         keybinds::keybinds_path().display()
     ));
+    lines
+}
+
+fn plane_lines(current: &str, selected: usize, status: &str) -> Vec<String> {
+    let mut lines = vec![
+        String::new(),
+        "  \x1b[1;36mSelect aircraft\x1b[0m".to_string(),
+        "  \x1b[2mUp/Down select   Enter choose   Esc back\x1b[0m".to_string(),
+        String::new(),
+    ];
+    for (index, plane) in planes::PLANES.iter().enumerate() {
+        let marker = if plane.id == current {
+            "  < selected"
+        } else {
+            ""
+        };
+        let label = format!("{:<22}", plane.label);
+        let text = format!("{label} [{}]{marker}", plane.nation);
+        if index == selected {
+            lines.push(format!("  \x1b[7m> {text}\x1b[0m"));
+        } else {
+            lines.push(format!("    {text}"));
+        }
+        lines.push(format!("      \x1b[2m{}\x1b[0m", plane.description));
+    }
+    lines.push(String::new());
+    if !status.is_empty() {
+        lines.push(format!("  \x1b[2m{status}\x1b[0m"));
+    }
     lines
 }
 
@@ -265,31 +298,34 @@ fn keybind_lines(
 // ---------------------------------------------------------------------------
 
 /// Prefer the already-built game binary next to this launcher; fall back to
-/// `cargo run` so the launcher works during development too.
-fn game_command() -> Command {
+/// `cargo run` so the launcher works during development too. The chosen
+/// aircraft is passed through as `--plane <id>`.
+fn game_command(plane: &str) -> Command {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             let candidate = dir.join(format!("openthunder{}", std::env::consts::EXE_SUFFIX));
             if candidate.exists() {
-                return Command::new(candidate);
+                let mut command = Command::new(candidate);
+                command.args(["--plane", plane]);
+                return command;
             }
         }
     }
     let mut command = Command::new("cargo");
-    command.args(["run", "--bin", "openthunder"]);
+    command.args(["run", "--bin", "openthunder", "--", "--plane", plane]);
     command
 }
 
-fn launch_game(terminal: &mut Terminal, keybinds: &Keybinds) {
+fn launch_game(terminal: &mut Terminal, keybinds: &Keybinds, plane: &str) {
     let _ = keybinds.save();
 
     // Hand the terminal back to the child process.
     terminal.disable_raw();
     terminal.leave_alt();
-    println!("Launching OpenThunder... (close the game window to return here)");
+    println!("Launching OpenThunder ({plane})... (close the game window to return here)");
     let _ = io::stdout().flush();
 
-    match game_command().status() {
+    match game_command(plane).status() {
         Ok(status) if status.success() => {}
         Ok(status) => println!("Game exited with {status}."),
         Err(err) => eprintln!("Failed to launch the game: {err}"),
@@ -310,6 +346,7 @@ fn launch_game(terminal: &mut Terminal, keybinds: &Keybinds) {
 
 enum Screen {
     Menu,
+    Planes,
     Keybinds,
 }
 
@@ -323,19 +360,22 @@ fn main() {
 
 fn run() -> io::Result<()> {
     let mut keybinds = Keybinds::load_or_create();
+    let mut settings = Settings::load_or_create();
     let mut terminal = Terminal::new()?;
     terminal.enable_raw()?;
     terminal.enter_alt();
 
     let mut screen = Screen::Menu;
     let mut menu_selected = 0usize;
+    let mut plane_selected = 0usize;
     let mut keybind_selected = 0usize;
     let mut capturing = false;
     let mut status = String::new();
 
     loop {
         match screen {
-            Screen::Menu => render(&menu_lines(menu_selected, &status)),
+            Screen::Menu => render(&menu_lines(menu_selected, &status, &settings.plane)),
+            Screen::Planes => render(&plane_lines(&settings.plane, plane_selected, &status)),
             Screen::Keybinds => render(&keybind_lines(
                 &keybinds,
                 keybind_selected,
@@ -352,24 +392,48 @@ fn run() -> io::Result<()> {
         match screen {
             Screen::Menu => match key {
                 Key::Up => menu_selected = menu_selected.saturating_sub(1),
-                Key::Down => menu_selected = (menu_selected + 1).min(3),
+                Key::Down => menu_selected = (menu_selected + 1).min(4),
                 Key::Char('q') | Key::Char('Q') => break,
                 Key::Enter => match menu_selected {
                     0 => {
-                        launch_game(&mut terminal, &keybinds);
+                        launch_game(&mut terminal, &keybinds, &settings.plane);
                         status.clear();
                     }
                     1 => {
+                        plane_selected = planes::PLANES
+                            .iter()
+                            .position(|plane| plane.id == settings.plane)
+                            .unwrap_or(0);
+                        screen = Screen::Planes;
+                        status = "Pick an aircraft.".to_string();
+                    }
+                    2 => {
                         screen = Screen::Keybinds;
                         status = "Changes are saved automatically.".to_string();
                     }
-                    2 => {
+                    3 => {
                         keybinds = Keybinds::default();
                         let _ = keybinds.save();
                         status = "Reset all keybinds to defaults.".to_string();
                     }
                     _ => break,
                 },
+                _ => {}
+            },
+            Screen::Planes => match key {
+                Key::Up => plane_selected = plane_selected.saturating_sub(1),
+                Key::Down => plane_selected = (plane_selected + 1).min(planes::PLANES.len() - 1),
+                Key::Enter => {
+                    let chosen = planes::PLANES[plane_selected].id;
+                    settings.plane = chosen.to_string();
+                    let _ = settings.save();
+                    status = format!("Selected {chosen}.");
+                    screen = Screen::Menu;
+                }
+                Key::Esc | Key::Char('q') | Key::Char('Q') => {
+                    screen = Screen::Menu;
+                    status.clear();
+                }
                 _ => {}
             },
             Screen::Keybinds => {
