@@ -22,9 +22,6 @@ use crate::flight::{Bindings, MouseAim};
 const LOOK_SENSITIVITY: f32 = 0.004;
 /// Maximum look pitch (radians).
 const MAX_PITCH: f32 = 1.3;
-/// How far the camera leans toward the aim direction when you move the cursor
-/// toward the edge of the screen (`0.0` = never, `1.0` = fully).
-const CAMERA_LEAN: f32 = 0.6;
 /// Normal vertical field of view (radians).
 const NORMAL_FOV: f32 = std::f32::consts::FRAC_PI_4;
 /// Field of view while zoomed in (radians, about 18 degrees).
@@ -140,7 +137,7 @@ fn chase_camera(
     mut zoom_state: ResMut<ZoomState>,
     target: Query<&Transform, (With<PlayerControlled>, Without<ChaseCamera>)>,
     mut camera: Query<(&mut Transform, &mut Projection), With<ChaseCamera>>,
-    mut rig: Local<Quat>,
+    mut look_dir: Local<Vec3>,
 ) {
     let Ok(aircraft) = target.single() else {
         return;
@@ -162,53 +159,41 @@ fn chase_camera(
         perspective.fov = NORMAL_FOV + (ZOOM_FOV - NORMAL_FOV) * zoom_state.amount;
     }
 
-    // The camera rig is the aircraft's frame rotated by the free-look orbit, so
-    // the aircraft stays put on screen while the camera circles it.
-    //
-    // We smooth the *rig* (a rotation) rather than the world position: that way
-    // the camera always sits exactly on the circle of radius |offset| around the
-    // aircraft instead of cutting the corner and drifting in and out.
-    // The camera leans toward the aim direction, so moving the cursor toward the
-    // edge of the screen pans the view with it (WT-style); it eases back to the
-    // nose as the aircraft turns onto the aim.
+    // --- Where the camera looks ---
+    // It eases toward the aim direction (WT: "the camera accelerates toward the
+    // cursor"), so you can aim anywhere and the view follows; while free-looking
+    // it follows the orbit instead. The camera stays level with the horizon
+    // rather than rolling with the aircraft, as in WT mouse aim.
     let nose = aircraft.rotation * Vec3::NEG_Z;
-    let lean = if mouse_aim.engaged && mouse_aim.target != Vec3::ZERO {
-        let offset = nose.angle_between(mouse_aim.target);
-        if offset > 1e-4 {
-            let axis = nose.cross(mouse_aim.target).normalize_or_zero();
-            Quat::from_axis_angle(axis, offset * CAMERA_LEAN)
-        } else {
-            Quat::IDENTITY
-        }
+    let want = if look.active {
+        (aircraft.rotation * look.rotation()) * Vec3::NEG_Z
+    } else if mouse_aim.engaged && mouse_aim.target != Vec3::ZERO {
+        mouse_aim.target
     } else {
-        Quat::IDENTITY
+        nose
     };
-    let target_rig = lean * aircraft.rotation * look.rotation();
-    let follow = (1.0 - (-10.0 * dt).exp()).clamp(0.0, 1.0);
-    *rig = rig.slerp(target_rig, follow);
+    if look_dir.length_squared() < 0.5 {
+        *look_dir = want;
+    }
+    let follow = (1.0 - (-8.0 * dt).exp()).clamp(0.0, 1.0);
+    *look_dir = look_dir.lerp(want, follow).normalize_or_zero();
 
-    // Constant-radius offset: behind (+Z is behind, since the nose is -Z) and up.
-    // Pull in a little while zoomed so the aircraft does not fill the view.
+    // --- Where the camera sits ---
+    // Behind the look direction, so the aircraft stays in view as you look
+    // around (and stays level rather than rolling with it); pull in a little
+    // while zoomed so the aircraft does not fill the view.
     let distance = 18.0 - 5.0 * zoom_state.amount;
-    let offset = *rig * Vec3::new(0.0, 3.0, distance);
+    let offset = *look_dir * -distance + Vec3::Y * 3.0;
     camera_transform.translation = aircraft.translation + offset;
 
-    // Look along the (free-look rotated) nose. `looking_to` guarantees the
-    // camera's forward is exactly this direction.
-    let forward = *rig * Vec3::NEG_Z;
-
-    // Partially inherit the aircraft's roll for a dynamic feel. Weighting world
-    // up avoids a degenerate up-vector when inverted.
-    let up = *rig * Vec3::Y;
-    let camera_up = (up + Vec3::Y * 2.0).normalize_or_zero();
-    let camera_up = if camera_up.length_squared() < 0.5 {
-        Vec3::Y
+    // Look along the smoothed direction, level with the horizon.
+    let up = if look_dir.y.abs() > 0.95 {
+        Vec3::Z
     } else {
-        camera_up
+        Vec3::Y
     };
-
     *camera_transform =
-        Transform::from_translation(camera_transform.translation).looking_to(forward, camera_up);
+        Transform::from_translation(camera_transform.translation).looking_to(*look_dir, up);
 }
 
 #[cfg(test)]
@@ -375,10 +360,10 @@ mod tests {
         assert!(!app.world().resource::<ZoomState>().active);
     }
 
-    /// The camera leans toward the aim direction, so moving the cursor toward the
-    /// edge of the screen pans the view with it.
+    /// The camera follows the aim direction, so you can aim anywhere and the view
+    /// pans with it.
     #[test]
-    fn the_camera_leans_toward_the_aim_direction() {
+    fn the_camera_follows_the_aim_direction() {
         use openthunder::keybinds::Keybinds;
 
         let mut app = App::new();
@@ -423,6 +408,57 @@ mod tests {
         assert!(
             forward.x > 0.05,
             "the camera should lean toward the aim, got {forward:?}"
+        );
+    }
+
+    /// In mouse aim the camera stays level with the horizon instead of rolling
+    /// with the aircraft (as in WT).
+    #[test]
+    fn the_camera_stays_level_with_the_horizon() {
+        use openthunder::keybinds::Keybinds;
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default())
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<FreeLook>()
+            .init_resource::<ZoomState>()
+            .init_resource::<MouseAim>()
+            .insert_resource(Bindings::from_config(&Keybinds::default()))
+            .add_systems(Update, chase_camera);
+
+        // A rolled aircraft, aiming straight ahead.
+        app.world_mut().spawn((
+            Transform::from_translation(Vec3::new(0.0, 1000.0, 0.0))
+                .with_rotation(Quat::from_rotation_z(1.2)),
+            PlayerControlled,
+        ));
+        let camera = app
+            .world_mut()
+            .spawn((
+                Transform::default(),
+                Projection::Perspective(PerspectiveProjection::default()),
+                ChaseCamera,
+            ))
+            .id();
+        {
+            let mut aim = app.world_mut().resource_mut::<MouseAim>();
+            aim.engaged = true;
+            aim.target = Vec3::NEG_Z;
+        }
+
+        for _ in 0..60 {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_secs_f32(0.05));
+            app.update();
+        }
+
+        let rotation = app.world().get::<Transform>(camera).unwrap().rotation;
+        let up = rotation * Vec3::Y;
+        assert!(
+            up.dot(Vec3::Y) > 0.9,
+            "the camera should stay level with the horizon, got up {up:?}"
         );
     }
 }

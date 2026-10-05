@@ -44,9 +44,6 @@ const WHEEL_HEIGHT: f32 = 1.1;
 const HARD_LANDING_SPEED: f32 = 3.5;
 /// Radians of aim per pixel of mouse movement.
 const AIM_SENSITIVITY: f32 = 0.0015;
-/// How far the aim direction may be from the nose (radians), so the on-screen
-/// cursor stays visible.
-const MAX_AIM_ANGLE: f32 = 0.6;
 
 /// Canonical key names -> Bevy key codes. The same names are validated by the
 /// launcher against `openthunder::keybinds::SUPPORTED_KEYS`.
@@ -399,16 +396,9 @@ fn read_player_input(
         keyboard_yaw += 1.0;
     }
 
-    // Keep the aim direction near the nose so the cursor stays on screen.
-    if mouse_aim.engaged {
-        if mouse_aim.target == Vec3::ZERO {
-            mouse_aim.target = nose;
-        }
-        let angle = nose.angle_between(mouse_aim.target);
-        if angle > MAX_AIM_ANGLE {
-            let axis = nose.cross(mouse_aim.target).normalize_or_zero();
-            mouse_aim.target = Quat::from_axis_angle(axis, MAX_AIM_ANGLE) * nose;
-        }
+    // The aim can be anywhere; just seed it on the nose the first time.
+    if mouse_aim.engaged && mouse_aim.target == Vec3::ZERO {
+        mouse_aim.target = nose;
     }
 
     // --- Pointer aim: point the nose at the aim direction (War Thunder style) ---
