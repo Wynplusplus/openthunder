@@ -16,12 +16,15 @@ use bevy::prelude::*;
 use openthunder::keybinds::{FREE_LOOK, ZOOM};
 
 use crate::aircraft::PlayerControlled;
-use crate::flight::Bindings;
+use crate::flight::{Bindings, MouseAim};
 
 /// Radians of look per pixel of mouse movement.
 const LOOK_SENSITIVITY: f32 = 0.004;
 /// Maximum look pitch (radians).
 const MAX_PITCH: f32 = 1.3;
+/// How far the camera leans toward the aim direction when you move the cursor
+/// toward the edge of the screen (`0.0` = never, `1.0` = fully).
+const CAMERA_LEAN: f32 = 0.6;
 /// Normal vertical field of view (radians).
 const NORMAL_FOV: f32 = std::f32::consts::FRAC_PI_4;
 /// Field of view while zoomed in (radians, about 18 degrees).
@@ -133,6 +136,7 @@ fn chase_camera(
     mouse: Res<ButtonInput<MouseButton>>,
     bindings: Res<Bindings>,
     look: Res<FreeLook>,
+    mouse_aim: Res<MouseAim>,
     mut zoom_state: ResMut<ZoomState>,
     target: Query<&Transform, (With<PlayerControlled>, Without<ChaseCamera>)>,
     mut camera: Query<(&mut Transform, &mut Projection), With<ChaseCamera>>,
@@ -164,7 +168,22 @@ fn chase_camera(
     // We smooth the *rig* (a rotation) rather than the world position: that way
     // the camera always sits exactly on the circle of radius |offset| around the
     // aircraft instead of cutting the corner and drifting in and out.
-    let target_rig = aircraft.rotation * look.rotation();
+    // The camera leans toward the aim direction, so moving the cursor toward the
+    // edge of the screen pans the view with it (WT-style); it eases back to the
+    // nose as the aircraft turns onto the aim.
+    let nose = aircraft.rotation * Vec3::NEG_Z;
+    let lean = if mouse_aim.engaged && mouse_aim.target != Vec3::ZERO {
+        let offset = nose.angle_between(mouse_aim.target);
+        if offset > 1e-4 {
+            let axis = nose.cross(mouse_aim.target).normalize_or_zero();
+            Quat::from_axis_angle(axis, offset * CAMERA_LEAN)
+        } else {
+            Quat::IDENTITY
+        }
+    } else {
+        Quat::IDENTITY
+    };
+    let target_rig = lean * aircraft.rotation * look.rotation();
     let follow = (1.0 - (-10.0 * dt).exp()).clamp(0.0, 1.0);
     *rig = rig.slerp(target_rig, follow);
 
@@ -295,6 +314,7 @@ mod tests {
             .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<FreeLook>()
             .init_resource::<ZoomState>()
+            .init_resource::<MouseAim>()
             .insert_resource(Bindings::from_config(&Keybinds::default()))
             .add_systems(Update, (chase_camera, clear_just_pressed).chain());
 
@@ -353,5 +373,56 @@ mod tests {
             fov_of(&app)
         );
         assert!(!app.world().resource::<ZoomState>().active);
+    }
+
+    /// The camera leans toward the aim direction, so moving the cursor toward the
+    /// edge of the screen pans the view with it.
+    #[test]
+    fn the_camera_leans_toward_the_aim_direction() {
+        use openthunder::keybinds::Keybinds;
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default())
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<FreeLook>()
+            .init_resource::<ZoomState>()
+            .init_resource::<MouseAim>()
+            .insert_resource(Bindings::from_config(&Keybinds::default()))
+            .add_systems(Update, chase_camera);
+
+        app.world_mut().spawn((
+            Transform::from_translation(Vec3::new(0.0, 1000.0, 0.0)),
+            PlayerControlled,
+        ));
+        let camera = app
+            .world_mut()
+            .spawn((
+                Transform::default(),
+                Projection::Perspective(PerspectiveProjection::default()),
+                ChaseCamera,
+            ))
+            .id();
+
+        // Aim 30 degrees to the right of the nose.
+        {
+            let mut aim = app.world_mut().resource_mut::<MouseAim>();
+            aim.engaged = true;
+            aim.target = Quat::from_rotation_y(-0.5) * Vec3::NEG_Z;
+        }
+
+        for _ in 0..60 {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_secs_f32(0.05));
+            app.update();
+        }
+
+        let rotation = app.world().get::<Transform>(camera).unwrap().rotation;
+        let forward = rotation * Vec3::NEG_Z;
+        assert!(
+            forward.x > 0.05,
+            "the camera should lean toward the aim, got {forward:?}"
+        );
     }
 }

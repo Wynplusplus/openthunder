@@ -151,6 +151,10 @@ follows the pointer. Move the cursor off-centre to turn, and bring it back to th
 centre to level off and fly straight. The keyboard pitch/roll/rudder keys remain
 available as manual overrides, and `A`/`D` always give full roll authority.
 
+The **camera leans toward where you are aiming**, so moving the cursor toward the
+edge of the screen pans the view with it (and it eases back to the nose as the
+aircraft turns onto the aim), like War Thunder.
+
 Press **`Esc`** at any time for the in-game menu (Resume / Quit to Desktop). The
 world **keeps flying** while it is open — the simulation is never paused; the
 aircraft just continues with neutral controls. Use `Up`/`Down` and `Enter`.
