@@ -29,7 +29,7 @@ use openthunder::keybinds::{
 use crate::aircraft::{
     Aircraft, AircraftSpec, Controls, FlapSetting, PlayerControlled, START_POSITION,
 };
-use crate::camera::{ChaseCamera, FreeLook};
+use crate::camera::{ChaseCamera, FreeLook, ZoomState};
 use crate::damage::{AircraftPart, DamageModel};
 use crate::menu::GameMenu;
 use crate::world::{WorldKind, terrain_height};
@@ -285,6 +285,7 @@ fn read_player_input(
     mut mouse_aim: ResMut<MouseAim>,
     menu: Res<GameMenu>,
     free_look: Res<FreeLook>,
+    zoom: Res<ZoomState>,
     cameras: Query<&GlobalTransform, With<ChaseCamera>>,
     mut query: Query<(&Transform, &mut Aircraft), With<PlayerControlled>>,
 ) {
@@ -324,9 +325,12 @@ fn read_player_input(
             .single()
             .map(|transform| transform.rotation())
             .unwrap_or(transform.rotation);
+        // Zooming narrows the view, so scale the sensitivity to match and keep
+        // aiming precise when zoomed in.
+        let sensitivity = AIM_SENSITIVITY * zoom.sensitivity_scale();
         let local = camera_rotation.inverse() * mouse_aim.target;
-        let rotated = Quat::from_rotation_y(-mouse_motion.delta.x * AIM_SENSITIVITY)
-            * Quat::from_rotation_x(-mouse_motion.delta.y * AIM_SENSITIVITY)
+        let rotated = Quat::from_rotation_y(-mouse_motion.delta.x * sensitivity)
+            * Quat::from_rotation_x(-mouse_motion.delta.y * sensitivity)
             * local;
         mouse_aim.target = (camera_rotation * rotated).normalize_or_zero();
     }
@@ -860,6 +864,7 @@ mod tests {
             .init_resource::<MouseAim>()
             .init_resource::<crate::menu::GameMenu>()
             .init_resource::<crate::camera::FreeLook>()
+            .init_resource::<crate::camera::ZoomState>()
             .insert_resource(Bindings::from_config(&Keybinds::default()))
             .add_systems(Update, read_player_input);
 
@@ -1370,6 +1375,7 @@ mod tests {
             .init_resource::<MouseAim>()
             .init_resource::<crate::menu::GameMenu>()
             .init_resource::<crate::camera::FreeLook>()
+            .init_resource::<crate::camera::ZoomState>()
             .insert_resource(Bindings::from_config(&Keybinds::default()))
             .add_systems(Update, read_player_input);
         let mut aircraft = Aircraft::new(spec_named("Bf 109 G-6"));
@@ -1516,6 +1522,7 @@ mod tests {
             .init_resource::<MouseAim>()
             .init_resource::<crate::menu::GameMenu>()
             .init_resource::<crate::camera::FreeLook>()
+            .init_resource::<crate::camera::ZoomState>()
             .insert_resource(Bindings::from_config(&Keybinds::default()))
             .add_systems(Update, (read_player_input, flight_dynamics).chain());
 
@@ -1558,6 +1565,7 @@ mod tests {
             .init_resource::<MouseAim>()
             .init_resource::<crate::menu::GameMenu>()
             .init_resource::<crate::camera::FreeLook>()
+            .init_resource::<crate::camera::ZoomState>()
             .insert_resource(Bindings::from_config(&Keybinds::default()))
             .add_systems(Update, (read_player_input, flight_dynamics).chain());
 
@@ -1635,6 +1643,30 @@ mod tests {
         assert!(
             app.world().get::<Aircraft>(entity).unwrap().controls.yaw < 0.0,
             "manual yaw-left should override the aim"
+        );
+    }
+
+    /// Zooming narrows the view, so the same mouse movement should move the aim
+    /// less — keeping aiming precise when zoomed in.
+    #[test]
+    fn zooming_reduces_the_aim_sensitivity() {
+        let aim_after_mouse_move = |zoom_amount: f32| -> Vec3 {
+            let (mut app, _entity) = input_app(0.0);
+            app.world_mut()
+                .resource_mut::<crate::camera::ZoomState>()
+                .amount = zoom_amount;
+            app.world_mut()
+                .resource_mut::<AccumulatedMouseMotion>()
+                .delta = Vec2::new(100.0, 0.0);
+            app.update();
+            app.world().resource::<MouseAim>().target
+        };
+
+        let normal = aim_after_mouse_move(0.0);
+        let zoomed = aim_after_mouse_move(1.0);
+        assert!(
+            zoomed.x.abs() < normal.x.abs(),
+            "zoom should reduce the aim sensitivity ({zoomed:?} vs {normal:?})"
         );
     }
 }

@@ -39,10 +39,21 @@ pub struct FreeLook {
     pub pitch: f32,
 }
 
-/// Whether the player has toggled the zoom in.
+/// Whether the player has toggled the zoom in, and how far it has eased in.
 #[derive(Resource, Default)]
 pub struct ZoomState {
     pub active: bool,
+    /// Smoothed zoom, `0.0` (normal) .. `1.0` (fully zoomed).
+    pub amount: f32,
+}
+
+impl ZoomState {
+    /// How much to scale mouse sensitivity by so the cursor still moves the same
+    /// distance on screen while zoomed in (the field of view is narrower).
+    pub fn sensitivity_scale(&self) -> f32 {
+        let ratio = ZOOM_FOV / NORMAL_FOV;
+        1.0 - self.amount * (1.0 - ratio)
+    }
 }
 
 impl FreeLook {
@@ -126,7 +137,6 @@ fn chase_camera(
     target: Query<&Transform, (With<PlayerControlled>, Without<ChaseCamera>)>,
     mut camera: Query<(&mut Transform, &mut Projection), With<ChaseCamera>>,
     mut rig: Local<Quat>,
-    mut zoom: Local<f32>,
 ) {
     let Ok(aircraft) = target.single() else {
         return;
@@ -142,9 +152,10 @@ fn chase_camera(
         zoom_state.active = !zoom_state.active;
     }
     let target_zoom = if zoom_state.active { 1.0 } else { 0.0 };
-    *zoom += (target_zoom - *zoom) * (1.0 - (-10.0 * dt).exp()).clamp(0.0, 1.0);
+    zoom_state.amount +=
+        (target_zoom - zoom_state.amount) * (1.0 - (-10.0 * dt).exp()).clamp(0.0, 1.0);
     if let Projection::Perspective(perspective) = &mut *projection {
-        perspective.fov = NORMAL_FOV + (ZOOM_FOV - NORMAL_FOV) * *zoom;
+        perspective.fov = NORMAL_FOV + (ZOOM_FOV - NORMAL_FOV) * zoom_state.amount;
     }
 
     // The camera rig is the aircraft's frame rotated by the free-look orbit, so
@@ -159,7 +170,7 @@ fn chase_camera(
 
     // Constant-radius offset: behind (+Z is behind, since the nose is -Z) and up.
     // Pull in a little while zoomed so the aircraft does not fill the view.
-    let distance = 18.0 - 5.0 * *zoom;
+    let distance = 18.0 - 5.0 * zoom_state.amount;
     let offset = *rig * Vec3::new(0.0, 3.0, distance);
     camera_transform.translation = aircraft.translation + offset;
 

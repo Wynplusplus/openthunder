@@ -239,9 +239,9 @@ for the limits and stiffening) is derived from it.
 - **Control stiffening / compressibility** at high speed.
 - **Landing gear** (toggle with `G`): retractable wheels with drag when extended.
 - **Zoom** (tap the right mouse button to toggle): narrows the field of view
-  WT-style and pulls the camera in, which also makes mouse aiming finer at long
-  range. Any action can be bound to a mouse button (LMB/RMB/MMB) as well as a
-  key.
+  WT-style, pulls the camera in and **lowers the mouse sensitivity** to match, so
+  aiming stays precise at long range. Any action can be bound to a mouse button
+  (LMB/RMB/MMB) as well as a key.
 - **Landing and take-off**: you spawn on the runway, throttle up, rotate and
   climb away; come back with the gear down, touch down gently (a hard descent —
   or a belly landing with the gear up — damages the airframe), roll out and stop.
