@@ -43,7 +43,7 @@ const WHEEL_HEIGHT: f32 = 1.1;
 /// Descent rate (m/s) a landing can absorb before it starts damaging the plane.
 const HARD_LANDING_SPEED: f32 = 3.5;
 /// Radians of aim per pixel of mouse movement.
-const AIM_SENSITIVITY: f32 = 0.003;
+const AIM_SENSITIVITY: f32 = 0.0015;
 /// How far the aim direction may be from the nose (radians), so the on-screen
 /// cursor stays visible.
 const MAX_AIM_ANGLE: f32 = 0.6;
