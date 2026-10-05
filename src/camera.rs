@@ -26,6 +26,11 @@ const MAX_PITCH: f32 = 1.3;
 const NORMAL_FOV: f32 = std::f32::consts::FRAC_PI_4;
 /// Field of view while zoomed in (radians, about 18 degrees).
 const ZOOM_FOV: f32 = 0.32;
+/// The camera only starts orbiting toward the aim once it is this far from the
+/// nose (radians) — a dead-zone around the centre of the screen.
+const CAMERA_ORBIT_DEADZONE: f32 = 0.2;
+/// ...and orbits fully by this offset (radians), near the edge of the screen.
+const CAMERA_ORBIT_EDGE: f32 = 0.5;
 
 /// Marks the camera that follows the player's aircraft.
 #[derive(Component)]
@@ -160,15 +165,22 @@ fn chase_camera(
     }
 
     // --- Where the camera looks ---
-    // It eases toward the aim direction (WT: "the camera accelerates toward the
-    // cursor"), so you can aim anywhere and the view follows; while free-looking
-    // it follows the orbit instead. The camera stays level with the horizon
-    // rather than rolling with the aircraft, as in WT mouse aim.
+    // For small aim offsets it sits behind the nose; once the cursor nears the
+    // edge of the screen it orbits toward the aim (WT: "the camera accelerates
+    // toward the cursor"). While free-looking it follows the orbit instead. It
+    // stays level with the horizon rather than rolling with the aircraft, as in
+    // WT mouse aim.
     let nose = aircraft.rotation * Vec3::NEG_Z;
     let want = if look.active {
         (aircraft.rotation * look.rotation()) * Vec3::NEG_Z
     } else if mouse_aim.engaged && mouse_aim.target != Vec3::ZERO {
-        mouse_aim.target
+        // Dead-zone around the centre, ramping to full orbit by the screen edge.
+        let offset = nose.angle_between(mouse_aim.target);
+        let t = ((offset - CAMERA_ORBIT_DEADZONE)
+            / (CAMERA_ORBIT_EDGE - CAMERA_ORBIT_DEADZONE).max(0.01))
+        .clamp(0.0, 1.0);
+        let t = t * t * (3.0 - 2.0 * t);
+        nose.lerp(mouse_aim.target, t).normalize_or_zero()
     } else {
         nose
     };
@@ -459,6 +471,56 @@ mod tests {
         assert!(
             up.dot(Vec3::Y) > 0.9,
             "the camera should stay level with the horizon, got up {up:?}"
+        );
+    }
+
+    /// A small aim offset stays inside the dead-zone, so the camera does not
+    /// orbit for small cursor movements.
+    #[test]
+    fn the_camera_does_not_orbit_for_a_small_aim_offset() {
+        use openthunder::keybinds::Keybinds;
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default())
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<FreeLook>()
+            .init_resource::<ZoomState>()
+            .init_resource::<MouseAim>()
+            .insert_resource(Bindings::from_config(&Keybinds::default()))
+            .add_systems(Update, chase_camera);
+
+        app.world_mut().spawn((
+            Transform::from_translation(Vec3::new(0.0, 1000.0, 0.0)),
+            PlayerControlled,
+        ));
+        let camera = app
+            .world_mut()
+            .spawn((
+                Transform::default(),
+                Projection::Perspective(PerspectiveProjection::default()),
+                ChaseCamera,
+            ))
+            .id();
+
+        // A small aim offset, well inside the dead-zone.
+        {
+            let mut aim = app.world_mut().resource_mut::<MouseAim>();
+            aim.engaged = true;
+            aim.target = Quat::from_rotation_y(-0.1) * Vec3::NEG_Z;
+        }
+        for _ in 0..60 {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_secs_f32(0.05));
+            app.update();
+        }
+
+        let rotation = app.world().get::<Transform>(camera).unwrap().rotation;
+        let forward = rotation * Vec3::NEG_Z;
+        assert!(
+            forward.x.abs() < 0.02,
+            "the camera should not orbit for a small aim offset, got {forward:?}"
         );
     }
 }
