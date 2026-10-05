@@ -371,9 +371,9 @@ fn read_player_input(
     };
 
     // --- Keyboard pitch / roll / yaw (manual override) ---
-    let mut keyboard_pitch = 0.0;
+    let mut keyboard_pitch: f32 = 0.0;
     let mut keyboard_roll: f32 = 0.0;
-    let mut keyboard_yaw = 0.0;
+    let mut keyboard_yaw: f32 = 0.0;
     if bindings.pressed(&keys, &mouse, PITCH_UP) || bindings.pressed(&keys, &mouse, PITCH_UP_ALT) {
         keyboard_pitch += 1.0;
     }
@@ -441,8 +441,28 @@ fn read_player_input(
         }
     }
 
+    // --- Manual inputs override the instructor's automatic ones ---
+    // A key on an axis replaces whatever the instructor was doing on that axis
+    // (WT: "the player can help the Instructor by steering along the roll, pitch
+    // and yaw angles using preset keys"), but the instructor still keeps the
+    // aircraft inside its limits below.
+    let mut pitch = if keyboard_pitch.abs() > 0.01 {
+        keyboard_pitch
+    } else {
+        aim_pitch
+    };
+    let mut roll = if keyboard_roll.abs() > 0.01 {
+        keyboard_roll
+    } else {
+        aim_roll
+    };
+    let yaw = if keyboard_yaw.abs() > 0.01 {
+        keyboard_yaw
+    } else {
+        aim_yaw
+    };
+
     // --- Instructor limits: never pull into a stall or past the g limit ---
-    let mut pitch = keyboard_pitch + aim_pitch;
     if pitch > 0.0 {
         let stall_margin =
             ((spec.stall_aoa - aircraft.alpha) / (spec.stall_aoa * 0.6)).clamp(0.0, 1.0);
@@ -454,12 +474,6 @@ fn read_player_input(
         pitch *= stall_margin;
     }
 
-    // A/D always give full manual roll authority; otherwise the instructor rolls.
-    let mut roll = if keyboard_roll.abs() > 0.01 {
-        keyboard_roll
-    } else {
-        aim_roll
-    };
     // The instructor trims out the propeller torque with a small counter-roll.
     let torque = prop_torque(
         spec.prop_torque,
@@ -473,7 +487,7 @@ fn read_player_input(
     aircraft.controls = Controls {
         pitch: pitch.clamp(-1.0, 1.0),
         roll: roll.clamp(-1.0, 1.0),
-        yaw: (keyboard_yaw + aim_yaw).clamp(-1.0, 1.0),
+        yaw: yaw.clamp(-1.0, 1.0),
     };
 }
 
@@ -1580,6 +1594,47 @@ mod tests {
         assert!(
             error < 12.0,
             "the nose should turn onto the aim direction, but it is {error:.0} deg off"
+        );
+    }
+
+    /// Manual keys on an axis replace the instructor's automatic input on that
+    /// axis (but the instructor still keeps the aircraft inside its limits).
+    #[test]
+    fn manual_inputs_override_the_instructor() {
+        // Pitch: the instructor pulls up toward the aim, but manual pitch-down wins.
+        let (mut app, entity) = input_app(0.0);
+        {
+            let mut aim = app.world_mut().resource_mut::<MouseAim>();
+            aim.engaged = true;
+            aim.target = Quat::from_rotation_x(0.5) * Vec3::NEG_Z;
+        }
+        app.update();
+        assert!(
+            app.world().get::<Aircraft>(entity).unwrap().controls.pitch > 0.0,
+            "the instructor should pull up toward the aim"
+        );
+        press_and_update(&mut app, KeyCode::ShiftLeft);
+        assert!(
+            app.world().get::<Aircraft>(entity).unwrap().controls.pitch < 0.0,
+            "manual pitch-down should override the aim"
+        );
+
+        // Yaw: the instructor yaws toward the aim, but manual yaw-left wins.
+        let (mut app, entity) = input_app(0.0);
+        {
+            let mut aim = app.world_mut().resource_mut::<MouseAim>();
+            aim.engaged = true;
+            aim.target = Quat::from_rotation_y(-0.4) * Vec3::NEG_Z;
+        }
+        app.update();
+        assert!(
+            app.world().get::<Aircraft>(entity).unwrap().controls.yaw > 0.0,
+            "the instructor should yaw toward the aim"
+        );
+        press_and_update(&mut app, KeyCode::KeyQ);
+        assert!(
+            app.world().get::<Aircraft>(entity).unwrap().controls.yaw < 0.0,
+            "manual yaw-left should override the aim"
         );
     }
 }

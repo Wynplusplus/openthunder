@@ -132,7 +132,7 @@ Defaults — all of these can be changed in the launcher:
 | `Up` / `Down`    | Pitch up / down (manual override)        |
 | `Ctrl` / `Shift` | Pitch up / down (secondary bindings)     |
 | `A` / `D`        | Roll left / right (manual override)      |
-| `Q` / `E`        | Yaw left / right (rudder)                |
+| `Q` / `E`        | Yaw left / right (manual override)       |
 | `W` / `S`        | Throttle up / down (hold up at 100% for WEP) |
 | `F` / `V`        | Flaps down / up (combat → takeoff → landing) |
 | `B`              | War emergency power (WEP, overheats)     |
@@ -182,8 +182,9 @@ In mouse-aim it does all of the following, and so do we:
   aerodynamic asymmetry) with a small counter-roll.
 - **Slows the g buildup** as it approaches the airframe's structural limit.
 - Points the nose where the cursor is: it **banks into the turn and pulls**, then
-  levels the wings as the target comes onto the nose. The keyboard can help on
-  any axis, but the instructor still keeps the aircraft inside its limits.
+  levels the wings as the target comes onto the nose. Pressing a **manual** key
+  on an axis **overrides** the instructor on that axis (pitch / roll / yaw), but
+  the instructor still keeps the aircraft inside its limits.
 
 The mouse moves a **world-space aim direction**, not a screen position, so the
 on-screen cursor **drifts back to the centre** as the nose catches up — exactly
