@@ -166,16 +166,29 @@ planes, or the planes the server sent if you are connected. The in-game menu
 
 ### Instructor (mouse aim)
 
-Like War Thunder's instructor, the mouse-aim system does more than point the
-nose. It:
+War Thunder's instructor is a set of programs that turn mouse movements into
+control-surface deflections while keeping the aircraft inside its realistic
+limits (see the WT article
+[*How the Instructor Works*](https://warthunder.com/en/news/4366-wiki-article-how-the-instructor-works-en/)).
+In mouse-aim it does all of the following, and so do we:
 
-- banks and pulls so the nose follows the pointer, and **levels the wings** when
-  the pointer is centred;
-- keeps the wing **off the critical angle of attack** (stall protection) and
-  **eases off near the structural g limit**;
-- **trims out the propeller torque** with a small counter-roll;
-- lets you override any axis from the keyboard while it keeps the aircraft
-  inside its limits.
+- **Prevents the wing from reaching the critical angle of attack**, preserving
+  lift — you cannot stall by yanking the mouse.
+- **Trims the aircraft to hold its current flight trajectory**: release the
+  mouse and it keeps flying the way it was, instead of pitching as the speed
+  changes. This is why you can throttle down without the nose wandering, and it
+  trims a banked turn for the extra lift it needs.
+- **Compensates for the propeller's reaction torque** (and the airframe's
+  aerodynamic asymmetry) with a small counter-roll.
+- **Slows the g buildup** as it approaches the airframe's structural limit.
+- Points the nose where the cursor is: it **banks into the turn and pulls**, then
+  levels the wings as the target comes onto the nose. The keyboard can help on
+  any axis, but the instructor still keeps the aircraft inside its limits.
+
+WT's control modes differ in how much the instructor does — *mouse aim* (full
+control), *simplified* (stall protection + trim), *realistic* (trim only) and
+*full* (instructor off). We model the full mouse-aim behaviour, in
+`read_player_input` / `aim_controls` in `flight.rs`.
 
 ---
 

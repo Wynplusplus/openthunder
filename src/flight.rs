@@ -238,6 +238,12 @@ fn engine_power_factor(altitude: f32, spec: &AircraftSpec) -> f32 {
     }
 }
 
+/// Air density (kg/m^3) at an altitude, using the flight model's exponential
+/// atmosphere. Shared with the instructor's auto-trim.
+fn air_density_at(altitude: f32) -> f32 {
+    1.225 * (-altitude.max(0.0) / 8500.0).exp()
+}
+
 /// Control authority factor. It grows with airspeed (mushy controls when slow)
 /// and then stiffens at high indicated airspeed / Mach, like the real
 /// compressibility that makes the controls lock up in a dive. Near the limit the
@@ -379,6 +385,29 @@ fn read_player_input(
                         aim_controls(transform.rotation, *ray.direction, bank);
                 }
             }
+        }
+    }
+
+    // --- Instructor auto-trim: hold the current flight path ---
+    // WT: "Trims the aircraft in the air so that when the controls are released,
+    // the aircraft maintains its current flight trajectory." We trim the wing to
+    // the angle of attack that holds the current flight-path angle at the
+    // current speed (and bank), so the aircraft no longer climbs or dives merely
+    // because the speed changed, and a banked turn is trimmed for the extra lift
+    // it needs.
+    {
+        let speed = aircraft.velocity.length();
+        let density = air_density_at(transform.translation.y);
+        let q = 0.5 * density * speed * speed;
+        if speed > 10.0 && q > 1.0 {
+            let gamma = (aircraft.velocity.y / speed).clamp(-1.0, 1.0).asin();
+            let body_up = transform.rotation * Vec3::Y;
+            let bank_cos = body_up.dot(Vec3::Y).abs().clamp(0.3, 1.0);
+            let cl_needed =
+                spec.mass * 9.81 / (gamma.cos().max(0.3) * bank_cos * q * spec.wing_area);
+            let alpha_needed = (cl_needed / spec.cl_slope).clamp(-spec.stall_aoa, spec.stall_aoa);
+            let blend = (6.0 * dt).clamp(0.0, 1.0);
+            aircraft.trim_alpha += (alpha_needed - aircraft.trim_alpha) * blend;
         }
     }
 
@@ -563,7 +592,7 @@ fn flight_dynamics(
 
     // --- Atmosphere ---
     let altitude = transform.translation.y.max(0.0);
-    let air_density = 1.225 * (-altitude / 8500.0).exp();
+    let air_density = air_density_at(altitude);
     let temperature = (288.15 - 0.0065 * altitude).max(216.65);
     let speed_of_sound = (1.4 * 287.05 * temperature).sqrt();
     let mach = speed / speed_of_sound;
@@ -1428,6 +1457,48 @@ mod tests {
         assert!(
             hard < 1.0,
             "a hard touchdown should damage the plane (integrity {hard:.2})"
+        );
+    }
+
+    /// The instructor auto-trims to hold the current flight path: an aircraft
+    /// left alone at cruise should stay level instead of climbing.
+    #[test]
+    fn the_instructor_trims_to_hold_the_flight_path() {
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default())
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<AccumulatedMouseMotion>()
+            .init_resource::<MouseAim>()
+            .init_resource::<crate::menu::GameMenu>()
+            .init_resource::<crate::camera::FreeLook>()
+            .insert_resource(Bindings::from_config(&Keybinds::default()))
+            .add_systems(Update, (read_player_input, flight_dynamics).chain());
+
+        let mut aircraft = Aircraft::new(corsair());
+        aircraft.velocity = Vec3::NEG_Z * 150.0;
+        aircraft.throttle = 0.8;
+        let entity = app
+            .world_mut()
+            .spawn((
+                Transform::from_translation(Vec3::new(0.0, 1000.0, 0.0)),
+                aircraft,
+                DamageModel::new(100.0),
+                PlayerControlled,
+            ))
+            .id();
+
+        for _ in 0..400 {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_secs_f32(0.02));
+            app.update();
+        }
+
+        let y = app.world().get::<Transform>(entity).unwrap().translation.y;
+        assert!(
+            (y - 1000.0).abs() < 80.0,
+            "the instructor should hold the altitude, but it drifted to {y:.0} m"
         );
     }
 }
