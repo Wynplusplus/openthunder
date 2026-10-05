@@ -20,7 +20,6 @@ use std::f32::consts::PI;
 
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
 
 use openthunder::keybinds::{
     FLAPS_DOWN, FLAPS_UP, GEAR, Keybinds, PITCH_DOWN, PITCH_DOWN_ALT, PITCH_UP, PITCH_UP_ALT,
@@ -43,6 +42,11 @@ const BELLY_HEIGHT: f32 = 0.7;
 const WHEEL_HEIGHT: f32 = 1.1;
 /// Descent rate (m/s) a landing can absorb before it starts damaging the plane.
 const HARD_LANDING_SPEED: f32 = 3.5;
+/// Radians of aim per pixel of mouse movement.
+const AIM_SENSITIVITY: f32 = 0.003;
+/// How far the aim direction may be from the nose (radians), so the on-screen
+/// cursor stays visible.
+const MAX_AIM_ANGLE: f32 = 0.6;
 
 /// Canonical key names -> Bevy key codes. The same names are validated by the
 /// launcher against `openthunder::keybinds::SUPPORTED_KEYS`.
@@ -183,12 +187,17 @@ impl Bindings {
     }
 }
 
-/// Tracks whether the player has moved the mouse yet. Mouse-aim stays neutral
-/// until then, so the aircraft doesn't react to wherever the OS cursor happens
-/// to be sitting when the window opens.
+/// Tracks the mouse-aim state: whether the player has moved the mouse yet, and
+/// the world-space direction they are aiming at.
+///
+/// The mouse does not move the control surfaces directly — it moves this aim
+/// direction, and the instructor points the nose at it. Because the direction is
+/// anchored in the world, the on-screen cursor drifts back to the centre as the
+/// aircraft turns toward it, exactly like War Thunder.
 #[derive(Resource, Default)]
 pub struct MouseAim {
     pub engaged: bool,
+    pub target: Vec3,
 }
 
 /// System set for the flight simulation. Other systems (such as the camera) can
@@ -276,8 +285,7 @@ fn read_player_input(
     mut mouse_aim: ResMut<MouseAim>,
     menu: Res<GameMenu>,
     free_look: Res<FreeLook>,
-    windows: Query<&Window, With<PrimaryWindow>>,
-    cameras: Query<(&Camera, &GlobalTransform), With<ChaseCamera>>,
+    cameras: Query<&GlobalTransform, With<ChaseCamera>>,
     mut query: Query<(&Transform, &mut Aircraft), With<PlayerControlled>>,
 ) {
     let Ok((transform, mut aircraft)) = query.single_mut() else {
@@ -302,10 +310,25 @@ fn read_player_input(
     let spec = aircraft.spec.clone();
 
     // Don't act on the mouse until the player actually moves it, so the aircraft
-    // doesn't lurch toward wherever the OS cursor happens to be at launch.
-    // While free-looking the mouse drives the camera, not the aircraft.
-    if !free_look.active && !mouse_aim.engaged && mouse_motion.delta != Vec2::ZERO {
-        mouse_aim.engaged = true;
+    // doesn't lurch at launch. The mouse moves a world-space aim direction and
+    // the instructor points the nose at it; because the direction is anchored in
+    // the world, the cursor drifts back to the centre as the nose catches up.
+    let nose = transform.rotation * Vec3::NEG_Z;
+    if !free_look.active && mouse_motion.delta != Vec2::ZERO {
+        if !mouse_aim.engaged {
+            mouse_aim.engaged = true;
+            mouse_aim.target = nose;
+        }
+        // Rotate the aim direction by the mouse movement, in the camera's frame.
+        let camera_rotation = cameras
+            .single()
+            .map(|transform| transform.rotation())
+            .unwrap_or(transform.rotation);
+        let local = camera_rotation.inverse() * mouse_aim.target;
+        let rotated = Quat::from_rotation_y(-mouse_motion.delta.x * AIM_SENSITIVITY)
+            * Quat::from_rotation_x(-mouse_motion.delta.y * AIM_SENSITIVITY)
+            * local;
+        mouse_aim.target = (camera_rotation * rotated).normalize_or_zero();
     }
 
     // --- Throttle ---
@@ -372,21 +395,28 @@ fn read_player_input(
         keyboard_yaw += 1.0;
     }
 
-    // --- Pointer aim: point the nose at the cursor (War Thunder style) ---
-    let mut aim_pitch = 0.0;
-    let mut aim_roll = 0.0;
-    let mut aim_yaw = 0.0;
-    if mouse_aim.engaged && !free_look.active {
-        if let (Ok(window), Ok((camera, camera_transform))) = (windows.single(), cameras.single()) {
-            if let Some(cursor) = window.cursor_position() {
-                if let Ok(ray) = camera.viewport_to_world(camera_transform, cursor) {
-                    let bank = current_bank(transform.rotation);
-                    (aim_pitch, aim_roll, aim_yaw) =
-                        aim_controls(transform.rotation, *ray.direction, bank);
-                }
-            }
+    // Keep the aim direction near the nose so the cursor stays on screen.
+    if mouse_aim.engaged {
+        if mouse_aim.target == Vec3::ZERO {
+            mouse_aim.target = nose;
+        }
+        let angle = nose.angle_between(mouse_aim.target);
+        if angle > MAX_AIM_ANGLE {
+            let axis = nose.cross(mouse_aim.target).normalize_or_zero();
+            mouse_aim.target = Quat::from_axis_angle(axis, MAX_AIM_ANGLE) * nose;
         }
     }
+
+    // --- Pointer aim: point the nose at the aim direction (War Thunder style) ---
+    let (aim_pitch, aim_roll, aim_yaw) = if mouse_aim.engaged && !free_look.active {
+        aim_controls(
+            transform.rotation,
+            mouse_aim.target,
+            current_bank(transform.rotation),
+        )
+    } else {
+        (0.0, 0.0, 0.0)
+    };
 
     // --- Instructor auto-trim: hold the current flight path ---
     // WT: "Trims the aircraft in the air so that when the controls are released,
@@ -1499,6 +1529,57 @@ mod tests {
         assert!(
             (y - 1000.0).abs() < 80.0,
             "the instructor should hold the altitude, but it drifted to {y:.0} m"
+        );
+    }
+
+    /// The instructor turns the nose onto the world-space aim direction, so the
+    /// aim cursor drifts back to the centre (like War Thunder).
+    #[test]
+    fn the_instructor_turns_onto_the_aim_direction() {
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default())
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<AccumulatedMouseMotion>()
+            .init_resource::<MouseAim>()
+            .init_resource::<crate::menu::GameMenu>()
+            .init_resource::<crate::camera::FreeLook>()
+            .insert_resource(Bindings::from_config(&Keybinds::default()))
+            .add_systems(Update, (read_player_input, flight_dynamics).chain());
+
+        let mut aircraft = Aircraft::new(corsair());
+        aircraft.velocity = Vec3::NEG_Z * 150.0;
+        let entity = app
+            .world_mut()
+            .spawn((
+                Transform::from_translation(Vec3::new(0.0, 2000.0, 0.0)),
+                aircraft,
+                DamageModel::new(100.0),
+                PlayerControlled,
+            ))
+            .id();
+
+        // Aim 30 degrees to the right of the nose.
+        let target = Quat::from_rotation_y(-0.5) * Vec3::NEG_Z;
+        {
+            let mut aim = app.world_mut().resource_mut::<MouseAim>();
+            aim.engaged = true;
+            aim.target = target;
+        }
+
+        for _ in 0..300 {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_secs_f32(0.02));
+            app.update();
+        }
+
+        let rotation = app.world().get::<Transform>(entity).unwrap().rotation;
+        let nose = rotation * Vec3::NEG_Z;
+        let error = nose.angle_between(target).to_degrees();
+        assert!(
+            error < 12.0,
+            "the nose should turn onto the aim direction, but it is {error:.0} deg off"
         );
     }
 }

@@ -185,6 +185,12 @@ In mouse-aim it does all of the following, and so do we:
   levels the wings as the target comes onto the nose. The keyboard can help on
   any axis, but the instructor still keeps the aircraft inside its limits.
 
+The mouse moves a **world-space aim direction**, not a screen position, so the
+on-screen cursor **drifts back to the centre** as the nose catches up — exactly
+like War Thunder. The OS cursor is hidden and locked while flying (and released
+while the menu is open), so the mouse is relative and never gets stuck at the
+window edge.
+
 WT's control modes differ in how much the instructor does — *mouse aim* (full
 control), *simplified* (stall protection + trim), *realistic* (trim only) and
 *full* (instructor off). We model the full mouse-aim behaviour, in
@@ -382,7 +388,7 @@ src/
   hud.rs             telemetry overlay
   menu.rs            in-game menu (Esc); the world keeps running while open
   spawn_menu.rs      pre-spawn plane selection screen
-  crosshair.rs       fixed gun crosshair at screen centre
+  crosshair.rs       gun crosshair + the mouse-aim cursor (and cursor capture)
   pilot.rs           crew g-tolerance, blackout/redout, tunnel-vision overlay
   match_client.rs    team deathmatch state: scoreboard, kill feed, respawn
   spotting.rs        Air RB-style spotting: render culling + aircraft markers
