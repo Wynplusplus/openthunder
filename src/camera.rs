@@ -28,9 +28,9 @@ const NORMAL_FOV: f32 = std::f32::consts::FRAC_PI_4;
 const ZOOM_FOV: f32 = 0.32;
 /// The camera only starts orbiting toward the aim once it is this far from the
 /// nose (radians) — a dead-zone around the centre of the screen.
-const CAMERA_ORBIT_DEADZONE: f32 = 0.35;
+const CAMERA_ORBIT_DEADZONE: f32 = 0.5;
 /// ...and orbits fully by this offset (radians), near the edge of the screen.
-const CAMERA_ORBIT_EDGE: f32 = 0.7;
+const CAMERA_ORBIT_EDGE: f32 = 0.9;
 
 /// Marks the camera that follows the player's aircraft.
 #[derive(Component)]
@@ -424,11 +424,11 @@ mod tests {
             ))
             .id();
 
-        // Aim 30 degrees to the right of the nose.
+        // Aim about 49 degrees to the right of the nose (past the dead-zone).
         {
             let mut aim = app.world_mut().resource_mut::<MouseAim>();
             aim.engaged = true;
-            aim.target = Quat::from_rotation_y(-0.5) * Vec3::NEG_Z;
+            aim.target = Quat::from_rotation_y(-0.85) * Vec3::NEG_Z;
         }
 
         for _ in 0..60 {
@@ -528,11 +528,11 @@ mod tests {
             ))
             .id();
 
-        // A small aim offset, well inside the dead-zone.
+        // A moderate aim offset, still inside the dead-zone.
         {
             let mut aim = app.world_mut().resource_mut::<MouseAim>();
             aim.engaged = true;
-            aim.target = Quat::from_rotation_y(-0.1) * Vec3::NEG_Z;
+            aim.target = Quat::from_rotation_y(-0.3) * Vec3::NEG_Z;
         }
         for _ in 0..60 {
             app.world_mut()
