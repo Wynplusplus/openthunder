@@ -24,12 +24,16 @@ struct MatchText;
 #[derive(Component)]
 struct KillFeedText;
 
+/// The bottom-right pitch / roll / yaw input readout.
+#[derive(Component)]
+struct ControlsText;
+
 pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_hud)
-            .add_systems(Update, update_hud);
+            .add_systems(Update, (update_hud, update_controls));
     }
 }
 
@@ -86,6 +90,24 @@ fn spawn_hud(mut commands: Commands) {
         TextColor(Color::srgb(1.0, 0.85, 0.55)),
         KillFeedText,
     ));
+
+    // Control inputs (pitch / roll / yaw), bottom right.
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: px(16.0),
+            right: px(12.0),
+            ..default()
+        },
+        Text::new(""),
+        TextFont {
+            font_size: FontSize::Px(16.0),
+            ..default()
+        },
+        TextLayout::justify(Justify::Right),
+        TextColor(Color::srgb(0.85, 0.92, 1.0)),
+        ControlsText,
+    ));
 }
 
 fn update_hud(
@@ -96,9 +118,24 @@ fn update_hud(
     match_state: Res<crate::match_client::MatchClient>,
     target_score: Res<crate::targets::TargetScore>,
     aircraft: Query<(&Aircraft, &Transform, &DamageModel), With<PlayerControlled>>,
-    mut hud: Query<&mut Text, (With<HudText>, Without<MatchText>, Without<KillFeedText>)>,
-    mut match_text: Query<&mut Text, (With<MatchText>, Without<KillFeedText>)>,
-    mut feed_text: Query<&mut Text, With<KillFeedText>>,
+    mut hud: Query<
+        &mut Text,
+        (
+            With<HudText>,
+            Without<MatchText>,
+            Without<KillFeedText>,
+            Without<ControlsText>,
+        ),
+    >,
+    mut match_text: Query<
+        &mut Text,
+        (
+            With<MatchText>,
+            Without<KillFeedText>,
+            Without<ControlsText>,
+        ),
+    >,
+    mut feed_text: Query<&mut Text, (With<KillFeedText>, Without<ControlsText>)>,
 ) {
     // The scoreboard and kill feed update even before we have spawned.
     if let Ok(mut text) = match_text.single_mut() {
@@ -280,4 +317,67 @@ fn update_hud(
         free_look = key_display(bindings.name(FREE_LOOK)),
         zoom_key = key_display(bindings.name(ZOOM)),
     );
+}
+
+/// Show how much pitch, roll and rudder the controls are applying, bottom right.
+fn update_controls(
+    aircraft: Query<&Aircraft, With<PlayerControlled>>,
+    mut text: Query<&mut Text, With<ControlsText>>,
+) {
+    let Ok(mut text) = text.single_mut() else {
+        return;
+    };
+    let Ok(aircraft) = aircraft.single() else {
+        **text = String::new();
+        return;
+    };
+    let controls = aircraft.controls;
+    **text = format!(
+        "CONTROLS\n\
+         Pitch {pitch:+4.0}%  {pitch_bar}\n\
+         Roll  {roll:+4.0}%  {roll_bar}\n\
+         Yaw   {yaw:+4.0}%  {yaw_bar}",
+        pitch = controls.pitch * 100.0,
+        roll = controls.roll * 100.0,
+        yaw = controls.yaw * 100.0,
+        pitch_bar = control_bar(controls.pitch),
+        roll_bar = control_bar(controls.roll),
+        yaw_bar = control_bar(controls.yaw),
+    );
+}
+
+/// A centred bar for a control input: `-1.0` fills to the left, `+1.0` to the
+/// right, `0.0` is empty.
+fn control_bar(value: f32) -> String {
+    const HALF: usize = 4;
+    let value = value.clamp(-1.0, 1.0);
+    let filled = (value.abs() * HALF as f32).round() as usize;
+    let mut bar = String::with_capacity(2 * HALF + 2);
+    bar.push('[');
+    for cell in 0..(2 * HALF) {
+        let on = if value >= 0.0 {
+            cell >= HALF && cell < HALF + filled
+        } else {
+            cell >= HALF - filled && cell < HALF
+        };
+        bar.push(if on { '#' } else { '-' });
+    }
+    bar.push(']');
+    bar
+}
+
+#[cfg(test)]
+mod tests {
+    use super::control_bar;
+
+    #[test]
+    fn control_bar_is_centred_and_signed() {
+        assert_eq!(control_bar(0.0), "[--------]");
+        assert_eq!(control_bar(1.0), "[----####]");
+        assert_eq!(control_bar(-1.0), "[####----]");
+        assert_eq!(control_bar(0.5), "[----##--]");
+        assert_eq!(control_bar(-0.5), "[--##----]");
+        // Out-of-range values clamp rather than panic.
+        assert_eq!(control_bar(5.0), "[----####]");
+    }
 }

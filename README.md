@@ -118,7 +118,9 @@ client on connect, so a server operator can tune the pilot's g-tolerance for the
 whole server — see [Pilot g-tolerance and blackout](#pilot-g-tolerance-and-blackout).
 
 The HUD shows the connection status (single-player / connecting / online / map +
-gamemode) and the server's pilot tolerance.
+gamemode), the server's pilot tolerance, and a **control-input readout** in the
+bottom-right corner: the pitch, roll and rudder being applied, as a percentage
+and a signed bar.
 
 ---
 
@@ -406,7 +408,7 @@ src/
   camera.rs          third-person chase camera + distance fog
   world.rs           ground, runway, scattered landmarks, sun
   damage.rs          per-section damage model + debug damage keys
-  hud.rs             telemetry overlay
+  hud.rs             telemetry + control-input overlay
   menu.rs            in-game menu (Esc); the world keeps running while open
   spawn_menu.rs      pre-spawn plane selection screen
   crosshair.rs       gun crosshair + the mouse-aim cursor (and cursor capture)
