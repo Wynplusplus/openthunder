@@ -15,7 +15,7 @@ use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
 use openthunder::keybinds::{FREE_LOOK, ZOOM};
 
-use crate::aircraft::PlayerControlled;
+use crate::aircraft::{Aircraft, PlayerControlled};
 use crate::flight::{Bindings, MouseAim};
 
 /// Radians of look per pixel of mouse movement.
@@ -140,11 +140,13 @@ fn chase_camera(
     look: Res<FreeLook>,
     mouse_aim: Res<MouseAim>,
     mut zoom_state: ResMut<ZoomState>,
-    target: Query<&Transform, (With<PlayerControlled>, Without<ChaseCamera>)>,
+    target: Query<(&Transform, &Aircraft), (With<PlayerControlled>, Without<ChaseCamera>)>,
     mut camera: Query<(&mut Transform, &mut Projection), With<ChaseCamera>>,
     mut look_dir: Local<Vec3>,
+    mut prev_speed: Local<f32>,
+    mut energy: Local<f32>,
 ) {
-    let Ok(aircraft) = target.single() else {
+    let Ok((aircraft, aircraft_state)) = target.single() else {
         return;
     };
     let Ok((mut camera_transform, mut projection)) = camera.single_mut() else {
@@ -191,10 +193,22 @@ fn chase_camera(
     *look_dir = look_dir.lerp(want, follow).normalize_or_zero();
 
     // --- Where the camera sits ---
+    // WT pulls the camera back when you accelerate or brake hard, so you can
+    // gauge your energy (it is the acceleration, not the speed, that moves it).
+    let speed = aircraft_state.velocity.length();
+    let accel = if dt > 1e-4 {
+        (speed - *prev_speed) / dt
+    } else {
+        0.0
+    };
+    *prev_speed = speed;
+    let target_energy = (accel.abs() * 0.5).clamp(0.0, 5.0);
+    *energy += (target_energy - *energy) * (1.0 - (-4.0 * dt).exp()).clamp(0.0, 1.0);
+
     // Behind the look direction, so the aircraft stays in view as you look
     // around (and stays level rather than rolling with it); pull in a little
     // while zoomed so the aircraft does not fill the view.
-    let distance = 18.0 - 5.0 * zoom_state.amount;
+    let distance = 18.0 - 5.0 * zoom_state.amount + *energy;
     let offset = *look_dir * -distance + Vec3::Y * 3.0;
     camera_transform.translation = aircraft.translation + offset;
 
@@ -211,6 +225,13 @@ fn chase_camera(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A bare aircraft for the camera tests.
+    fn test_aircraft() -> Aircraft {
+        Aircraft::new(crate::aircraft::AircraftSpec::from_config(
+            &openthunder::plane_config::default_planes()[0],
+        ))
+    }
 
     #[test]
     fn look_rotation_is_identity_at_rest() {
@@ -317,6 +338,7 @@ mod tests {
 
         app.world_mut().spawn((
             Transform::from_translation(Vec3::new(0.0, 1000.0, 0.0)),
+            test_aircraft(),
             PlayerControlled,
         ));
         let camera = app
@@ -390,6 +412,7 @@ mod tests {
 
         app.world_mut().spawn((
             Transform::from_translation(Vec3::new(0.0, 1000.0, 0.0)),
+            test_aircraft(),
             PlayerControlled,
         ));
         let camera = app
@@ -443,6 +466,7 @@ mod tests {
         app.world_mut().spawn((
             Transform::from_translation(Vec3::new(0.0, 1000.0, 0.0))
                 .with_rotation(Quat::from_rotation_z(1.2)),
+            test_aircraft(),
             PlayerControlled,
         ));
         let camera = app
@@ -492,6 +516,7 @@ mod tests {
 
         app.world_mut().spawn((
             Transform::from_translation(Vec3::new(0.0, 1000.0, 0.0)),
+            test_aircraft(),
             PlayerControlled,
         ));
         let camera = app
@@ -521,6 +546,58 @@ mod tests {
         assert!(
             forward.x.abs() < 0.02,
             "the camera should not orbit for a small aim offset, got {forward:?}"
+        );
+    }
+
+    /// WT pulls the camera back when you accelerate, so you can gauge your energy.
+    #[test]
+    fn the_camera_pulls_back_under_acceleration() {
+        use openthunder::keybinds::Keybinds;
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default())
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<FreeLook>()
+            .init_resource::<ZoomState>()
+            .init_resource::<MouseAim>()
+            .insert_resource(Bindings::from_config(&Keybinds::default()))
+            .add_systems(Update, chase_camera);
+
+        let mut aircraft = test_aircraft();
+        aircraft.velocity = Vec3::NEG_Z * 100.0;
+        let plane = app
+            .world_mut()
+            .spawn((
+                Transform::from_translation(Vec3::new(0.0, 1000.0, 0.0)),
+                aircraft,
+                PlayerControlled,
+            ))
+            .id();
+        let camera = app
+            .world_mut()
+            .spawn((
+                Transform::default(),
+                Projection::Perspective(PerspectiveProjection::default()),
+                ChaseCamera,
+            ))
+            .id();
+
+        for _ in 0..60 {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_secs_f32(0.05));
+            // Accelerate forward.
+            app.world_mut().get_mut::<Aircraft>(plane).unwrap().velocity += Vec3::NEG_Z;
+            app.update();
+        }
+
+        let plane_pos = app.world().get::<Transform>(plane).unwrap().translation;
+        let camera_pos = app.world().get::<Transform>(camera).unwrap().translation;
+        let distance = (camera_pos - plane_pos).length();
+        assert!(
+            distance > 19.0,
+            "the camera should pull back under acceleration, got {distance:.1} m"
         );
     }
 }

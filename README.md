@@ -155,7 +155,9 @@ The **camera follows where you are aiming**: for small cursor movements it stays
 behind the nose, and once the cursor nears the **edge of the screen** the view
 orbits with it (WT: "the camera accelerates toward the cursor"). It stays **level
 with the horizon** rather than rolling with the aircraft, like War Thunder mouse
-aim, and the aircraft stays in view.
+aim, and the aircraft stays in view. Like War Thunder it also **pulls back when
+you accelerate or brake hard** (it is the acceleration, not the speed, that moves
+it) so you can read your energy state at a glance.
 
 Press **`Esc`** at any time for the in-game menu (Resume / Quit to Desktop). The
 world **keeps flying** while it is open — the simulation is never paused; the
