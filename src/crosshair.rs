@@ -29,8 +29,16 @@ pub struct CrosshairPlugin;
 
 impl Plugin for CrosshairPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_crosshair)
-            .add_systems(Update, (update_crosshair, update_aim_cursor, manage_cursor));
+        app.add_systems(Startup, spawn_crosshair).add_systems(
+            Update,
+            (
+                // Run after the flight step so the aircraft's transform is final
+                // and the aim clamp sees the freshly-moved aim.
+                update_crosshair.after(crate::flight::FlightSet),
+                update_aim_cursor.after(crate::flight::FlightSet),
+                manage_cursor,
+            ),
+        );
     }
 }
 
@@ -135,9 +143,17 @@ fn update_crosshair(
     }
 }
 
-/// Put the aim cursor wherever the aim direction projects on screen.
+/// Half the aim cursor's size in pixels (it is a 16x16 box).
+const AIM_CURSOR_HALF: f32 = 8.0;
+/// Keep the cursor at least this far inside the screen edge.
+const AIM_CURSOR_MARGIN: f32 = 6.0;
+
+/// Put the aim cursor wherever the aim direction projects on screen — and keep
+/// it on screen. Zooming in narrows the field of view, so the same aim can
+/// otherwise slide off the edge; when that happens the cursor is clamped to the
+/// edge and the aim is pulled in with it, so the guns follow the cursor.
 fn update_aim_cursor(
-    mouse_aim: Res<MouseAim>,
+    mut mouse_aim: ResMut<MouseAim>,
     camera: Query<(&Camera, &GlobalTransform), With<ChaseCamera>>,
     mut cursor: Query<&mut Node, With<AimCursor>>,
 ) {
@@ -152,14 +168,28 @@ fn update_aim_cursor(
         return;
     }
     let point = camera_transform.translation() + mouse_aim.target * 1000.0;
-    match camera.world_to_viewport(camera_transform, point) {
-        Ok(screen) => {
-            node.left = px(screen.x - 8.0);
-            node.top = px(screen.y - 8.0);
-            node.display = Display::Flex;
+    let Ok(screen) = camera.world_to_viewport(camera_transform, point) else {
+        node.display = Display::None;
+        return;
+    };
+    let Some(size) = camera.logical_viewport_size() else {
+        return;
+    };
+
+    // Clamp the cursor inside the viewport (with a small margin so its box stays
+    // fully visible), and move the aim to match when it had to be clamped.
+    let lo = Vec2::splat(AIM_CURSOR_HALF + AIM_CURSOR_MARGIN);
+    let hi = (size - lo).max(lo);
+    let clamped = screen.clamp(lo, hi);
+    if clamped != screen {
+        if let Ok(ray) = camera.viewport_to_world(camera_transform, clamped) {
+            mouse_aim.target = *ray.direction;
         }
-        Err(_) => node.display = Display::None,
     }
+
+    node.left = px(clamped.x - AIM_CURSOR_HALF);
+    node.top = px(clamped.y - AIM_CURSOR_HALF);
+    node.display = Display::Flex;
 }
 
 /// Hide and lock the OS cursor while flying so the mouse is relative, and
@@ -184,11 +214,25 @@ mod tests {
 
     const SCREEN: UVec2 = UVec2::new(1280, 720);
 
+    /// A projection with the given vertical field of view and the 1280x720 aspect.
+    fn projection(fov: f32) -> PerspectiveProjection {
+        PerspectiveProjection {
+            fov,
+            aspect_ratio: SCREEN.x as f32 / SCREEN.y as f32,
+            ..default()
+        }
+    }
+
     /// Spawn a chase camera with a pre-computed projection and a fixed viewport,
     /// so `world_to_viewport` works without a renderer.
-    fn spawn_camera(app: &mut App, translation: Vec3, rotation: Quat) {
+    fn spawn_camera(
+        app: &mut App,
+        translation: Vec3,
+        rotation: Quat,
+        projection: PerspectiveProjection,
+    ) {
         let mut camera = Camera::default();
-        camera.computed.clip_from_view = PerspectiveProjection::default().get_clip_from_view();
+        camera.computed.clip_from_view = projection.get_clip_from_view();
         camera.computed.target_info = Some(RenderTargetInfo {
             physical_size: SCREEN,
             scale_factor: 1.0,
@@ -213,10 +257,10 @@ mod tests {
         app.world_mut().spawn((Node::default(), Crosshair)).id()
     }
 
-    fn crosshair_px(app: &App, entity: Entity) -> (f32, f32) {
+    fn node_px(app: &App, entity: Entity) -> (f32, f32) {
         let node = app.world().get::<Node>(entity).unwrap();
         let (Val::Px(left), Val::Px(top)) = (node.left, node.top) else {
-            panic!("the crosshair position should be set in pixels");
+            panic!("the node position should be set in pixels");
         };
         (left, top)
     }
@@ -229,14 +273,19 @@ mod tests {
         app.add_systems(Update, update_crosshair);
 
         spawn_aircraft(&mut app, Quat::IDENTITY);
-        spawn_camera(&mut app, Vec3::new(0.0, 0.0, 18.0), Quat::IDENTITY);
+        spawn_camera(
+            &mut app,
+            Vec3::new(0.0, 0.0, 18.0),
+            Quat::IDENTITY,
+            projection(std::f32::consts::FRAC_PI_4),
+        );
         let crosshair = spawn_crosshair_node(&mut app);
 
         app.update();
 
         // Centre of 1280x720 is (640, 360); the node is 28px, so its corner is
         // offset by 14px.
-        let (left, top) = crosshair_px(&app, crosshair);
+        let (left, top) = node_px(&app, crosshair);
         assert!((left - 626.0).abs() < 1.0, "left = {left}");
         assert!((top - 346.0).abs() < 1.0, "top = {top}");
     }
@@ -250,12 +299,17 @@ mod tests {
 
         // Nose yawed to the right of the (fixed) camera.
         spawn_aircraft(&mut app, Quat::from_rotation_y(-0.3));
-        spawn_camera(&mut app, Vec3::new(0.0, 0.0, 18.0), Quat::IDENTITY);
+        spawn_camera(
+            &mut app,
+            Vec3::new(0.0, 0.0, 18.0),
+            Quat::IDENTITY,
+            projection(std::f32::consts::FRAC_PI_4),
+        );
         let crosshair = spawn_crosshair_node(&mut app);
 
         app.update();
 
-        let (left, _) = crosshair_px(&app, crosshair);
+        let (left, _) = node_px(&app, crosshair);
         assert!(
             left > 626.0 + 10.0,
             "the crosshair should follow the nose right, left = {left}"
@@ -275,16 +329,92 @@ mod tests {
             &mut app,
             Vec3::new(0.0, 0.0, 18.0),
             Quat::from_rotation_y(0.4),
+            projection(std::f32::consts::FRAC_PI_4),
         );
         let crosshair = spawn_crosshair_node(&mut app);
 
         app.update();
 
         // The nose now projects to the right of the (off-centre) view.
-        let (left, _) = crosshair_px(&app, crosshair);
+        let (left, _) = node_px(&app, crosshair);
         assert!(
             left > 626.0 + 10.0,
             "the crosshair should leave the screen centre, left = {left}"
+        );
+    }
+
+    /// Zooming in narrows the view, so a far-off aim would slide off the edge; the
+    /// cursor is clamped on screen and the aim is pulled in with it.
+    #[test]
+    fn the_aim_cursor_stays_on_screen_when_zoomed() {
+        let mut app = App::new();
+        app.init_resource::<MouseAim>()
+            .add_systems(Update, update_aim_cursor);
+
+        spawn_camera(
+            &mut app,
+            Vec3::new(0.0, 0.0, 18.0),
+            Quat::IDENTITY,
+            projection(0.32), // zoomed in
+        );
+        let cursor = app.world_mut().spawn((Node::default(), AimCursor)).id();
+
+        // Aim far to the right — well outside the narrow zoomed view.
+        {
+            let mut aim = app.world_mut().resource_mut::<MouseAim>();
+            aim.engaged = true;
+            aim.target = Quat::from_rotation_y(-0.9) * Vec3::NEG_Z;
+        }
+        let before = app.world().resource::<MouseAim>().target;
+
+        app.update();
+
+        // The cursor box is fully on screen...
+        let (left, top) = node_px(&app, cursor);
+        assert!(
+            left >= 0.0 && left + 2.0 * AIM_CURSOR_HALF <= SCREEN.x as f32,
+            "cursor left = {left}"
+        );
+        assert!(
+            top >= 0.0 && top + 2.0 * AIM_CURSOR_HALF <= SCREEN.y as f32,
+            "cursor top = {top}"
+        );
+        // ...and the aim was pulled in to match.
+        let after = app.world().resource::<MouseAim>().target;
+        assert!(
+            after.angle_between(before) > 0.05,
+            "the aim should be clamped, was {before:?}, now {after:?}"
+        );
+    }
+
+    /// An aim that is already on screen is left alone.
+    #[test]
+    fn an_on_screen_aim_is_not_clamped() {
+        let mut app = App::new();
+        app.init_resource::<MouseAim>()
+            .add_systems(Update, update_aim_cursor);
+
+        spawn_camera(
+            &mut app,
+            Vec3::new(0.0, 0.0, 18.0),
+            Quat::IDENTITY,
+            projection(0.32),
+        );
+        app.world_mut().spawn((Node::default(), AimCursor));
+
+        let target = Quat::from_rotation_y(-0.05) * Vec3::NEG_Z;
+        {
+            let mut aim = app.world_mut().resource_mut::<MouseAim>();
+            aim.engaged = true;
+            aim.target = target;
+        }
+
+        app.update();
+
+        let after = app.world().resource::<MouseAim>().target;
+        assert!(
+            (after - target).length() < 1e-4,
+            "a centred aim should not move, was {target:?}, now {after:?}"
         );
     }
 }

@@ -199,9 +199,10 @@ The mouse moves a **world-space aim direction**, not a screen position, so the
 on-screen cursor **drifts back toward the gun crosshair** as the nose catches up
 — exactly like War Thunder. The **crosshair itself always marks the gun
 direction** (the nose projected on screen), so it leaves the screen centre as the
-camera orbits. The OS cursor is hidden and locked while flying (and released
-while the menu is open), so the mouse is relative and never gets stuck at the
-window edge.
+camera orbits. The aim cursor is **kept on screen**: if a zoomed-in view would
+push it past the edge, the cursor is clamped to the edge and the aim is pulled in
+with it. The OS cursor is hidden and locked while flying (and released while the
+menu is open), so the mouse is relative and never gets stuck at the window edge.
 
 WT's control modes differ in how much the instructor does — *mouse aim* (full
 control), *simplified* (stall protection + trim), *realistic* (trim only) and
@@ -252,8 +253,9 @@ for the limits and stiffening) is derived from it.
 - **Zoom** (tap the right mouse button to toggle): narrows the field of view
   WT-style, pulls the camera in and **lowers the mouse sensitivity** to match, so
   aiming stays precise at long range. While zoomed the camera **stops orbiting**
-  and locks behind the nose. Any action can be bound to a mouse button
-  (LMB/RMB/MMB) as well as a key.
+  and locks behind the nose, and the **aim cursor stays on screen** (clamped to
+  the edge, pulling the aim in with it). Any action can be bound to a mouse
+  button (LMB/RMB/MMB) as well as a key.
 - **Landing and take-off**: you spawn on the runway, throttle up, rotate and
   climb away; come back with the gear down, touch down gently (a hard descent —
   or a belly landing with the gear up — damages the airframe), roll out and stop.
