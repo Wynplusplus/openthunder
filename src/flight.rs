@@ -44,6 +44,9 @@ const WHEEL_HEIGHT: f32 = 1.1;
 const HARD_LANDING_SPEED: f32 = 3.5;
 /// Radians of aim per pixel of mouse movement.
 const AIM_SENSITIVITY: f32 = 0.0015;
+/// When the reticle is within this angle of the nose (radians) and the player is
+/// steering manually, the aim rides along with the aircraft (WT behaviour).
+const AIM_FOLLOW_ANGLE: f32 = 0.04;
 
 /// Canonical key names -> Bevy key codes. The same names are validated by the
 /// launcher against `openthunder::keybinds::SUPPORTED_KEYS`.
@@ -394,6 +397,20 @@ fn read_player_input(
     }
     if bindings.pressed(&keys, &mouse, YAW_RIGHT) {
         keyboard_yaw += 1.0;
+    }
+
+    // WT: with the reticle on the crosshair (the nose lined up with the aim) and
+    // the player steering manually, the reticle rides along with the aircraft
+    // instead of staying pinned in the world — so releasing the keys holds the
+    // new heading rather than snapping back to the old aim.
+    let manual =
+        keyboard_pitch.abs() > 0.01 || keyboard_roll.abs() > 0.01 || keyboard_yaw.abs() > 0.01;
+    if manual
+        && !free_look.active
+        && mouse_aim.engaged
+        && nose.angle_between(mouse_aim.target) < AIM_FOLLOW_ANGLE
+    {
+        mouse_aim.target = nose;
     }
 
     // The aim can be anywhere; just seed it on the nose the first time.
@@ -1657,6 +1674,102 @@ mod tests {
         assert!(
             zoomed.x.abs() < normal.x.abs(),
             "zoom should reduce the aim sensitivity ({zoomed:?} vs {normal:?})"
+        );
+    }
+
+    /// A headless app with the input + flight systems and a cruising aircraft.
+    fn flight_app() -> (App, Entity) {
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default())
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<AccumulatedMouseMotion>()
+            .init_resource::<MouseAim>()
+            .init_resource::<crate::menu::GameMenu>()
+            .init_resource::<crate::camera::FreeLook>()
+            .init_resource::<crate::camera::ZoomState>()
+            .insert_resource(Bindings::from_config(&Keybinds::default()))
+            .add_systems(Update, (read_player_input, flight_dynamics).chain());
+
+        let mut aircraft = Aircraft::new(corsair());
+        aircraft.velocity = Vec3::NEG_Z * 150.0;
+        let entity = app
+            .world_mut()
+            .spawn((
+                Transform::from_translation(Vec3::new(0.0, 2000.0, 0.0)),
+                aircraft,
+                DamageModel::new(100.0),
+                PlayerControlled,
+            ))
+            .id();
+        (app, entity)
+    }
+
+    fn run_frames(app: &mut App, frames: usize) {
+        for _ in 0..frames {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_secs_f32(0.02));
+            app.update();
+        }
+    }
+
+    /// WT: with the reticle on the crosshair (aim lined up with the nose) and the
+    /// player steering manually, the reticle rides along with the aircraft — so
+    /// releasing the keys holds the new heading.
+    #[test]
+    fn manual_input_drags_the_reticle_when_it_is_on_the_crosshair() {
+        let (mut app, entity) = flight_app();
+        {
+            let mut aim = app.world_mut().resource_mut::<MouseAim>();
+            aim.engaged = true;
+            aim.target = Vec3::NEG_Z; // on the nose
+        }
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ArrowUp); // manual pitch-up
+
+        run_frames(&mut app, 120);
+
+        let rotation = app.world().get::<Transform>(entity).unwrap().rotation;
+        let nose = rotation * Vec3::NEG_Z;
+        let aim = app.world().resource::<MouseAim>().target;
+        assert!(
+            nose.y > 0.05,
+            "the aircraft should have pitched up, nose = {nose:?}"
+        );
+        assert!(
+            aim.y > 0.05,
+            "the reticle should ride up with the nose, aim = {aim:?}"
+        );
+        assert!(
+            nose.angle_between(aim).to_degrees() < 5.0,
+            "the reticle should stay on the crosshair, error = {:.1} deg",
+            nose.angle_between(aim).to_degrees()
+        );
+    }
+
+    /// ...but if the reticle is off the crosshair, manual input leaves it pinned
+    /// in the world (the instructor resumes toward it on release).
+    #[test]
+    fn manual_input_leaves_an_off_crosshair_reticle() {
+        let (mut app, _entity) = flight_app();
+        let target = Quat::from_rotation_y(-0.5) * Vec3::NEG_Z; // 30 deg off
+        {
+            let mut aim = app.world_mut().resource_mut::<MouseAim>();
+            aim.engaged = true;
+            aim.target = target;
+        }
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ArrowUp);
+
+        run_frames(&mut app, 120);
+
+        let aim = app.world().resource::<MouseAim>().target;
+        assert!(
+            aim.angle_between(target).to_degrees() < 2.0,
+            "an off-crosshair reticle should stay put, aim = {aim:?}"
         );
     }
 }

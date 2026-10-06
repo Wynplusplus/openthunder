@@ -193,7 +193,10 @@ In mouse-aim it does all of the following, and so do we:
 - Points the nose where the cursor is: it **banks into the turn and pulls**, then
   levels the wings as the target comes onto the nose. Pressing a **manual** key
   on an axis **overrides** the instructor on that axis (pitch / roll / yaw), but
-  the instructor still keeps the aircraft inside its limits.
+  the instructor still keeps the aircraft inside its limits. While the reticle is
+  on the crosshair and you steer manually, it **rides along with the aircraft**
+  (WT behaviour), so releasing the keys holds the new heading instead of snapping
+  back to the old aim.
 
 The mouse moves a **world-space aim direction**, not a screen position, so the
 on-screen cursor **drifts back toward the gun crosshair** as the nose catches up
