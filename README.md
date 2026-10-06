@@ -157,7 +157,8 @@ orbits with it (WT: "the camera accelerates toward the cursor"). It stays **leve
 with the horizon** rather than rolling with the aircraft, like War Thunder mouse
 aim, and the aircraft stays in view. Like War Thunder it also **pulls back when
 you accelerate or brake hard** (it is the acceleration, not the speed, that moves
-it) so you can read your energy state at a glance.
+it) so you can read your energy state at a glance. **Zooming in locks the view
+behind the nose** — the orbit fades out as the zoom eases in, as in WT.
 
 Press **`Esc`** at any time for the in-game menu (Resume / Quit to Desktop). The
 world **keeps flying** while it is open — the simulation is never paused; the
@@ -250,7 +251,8 @@ for the limits and stiffening) is derived from it.
 - **Landing gear** (toggle with `G`): retractable wheels with drag when extended.
 - **Zoom** (tap the right mouse button to toggle): narrows the field of view
   WT-style, pulls the camera in and **lowers the mouse sensitivity** to match, so
-  aiming stays precise at long range. Any action can be bound to a mouse button
+  aiming stays precise at long range. While zoomed the camera **stops orbiting**
+  and locks behind the nose. Any action can be bound to a mouse button
   (LMB/RMB/MMB) as well as a key.
 - **Landing and take-off**: you spawn on the runway, throttle up, rotate and
   climb away; come back with the gear down, touch down gently (a hard descent —

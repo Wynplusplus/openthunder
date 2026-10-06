@@ -177,11 +177,13 @@ fn chase_camera(
         (aircraft.rotation * look.rotation()) * Vec3::NEG_Z
     } else if mouse_aim.engaged && mouse_aim.target != Vec3::ZERO {
         // Dead-zone around the centre, ramping to full orbit by the screen edge.
+        // Zooming in locks the view behind the nose (as in WT), so the orbit
+        // fades out as the zoom eases in.
         let offset = nose.angle_between(mouse_aim.target);
         let t = ((offset - CAMERA_ORBIT_DEADZONE)
             / (CAMERA_ORBIT_EDGE - CAMERA_ORBIT_DEADZONE).max(0.01))
         .clamp(0.0, 1.0);
-        let t = t * t * (3.0 - 2.0 * t);
+        let t = t * t * (3.0 - 2.0 * t) * (1.0 - zoom_state.amount);
         nose.lerp(mouse_aim.target, t).normalize_or_zero()
     } else {
         nose
@@ -598,6 +600,64 @@ mod tests {
         assert!(
             distance > 19.0,
             "the camera should pull back under acceleration, got {distance:.1} m"
+        );
+    }
+
+    /// Zooming in locks the camera behind the nose — it stops orbiting toward
+    /// the aim (as in WT).
+    #[test]
+    fn zooming_in_stops_the_camera_orbiting() {
+        use openthunder::keybinds::Keybinds;
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default())
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<FreeLook>()
+            .init_resource::<ZoomState>()
+            .init_resource::<MouseAim>()
+            .insert_resource(Bindings::from_config(&Keybinds::default()))
+            .add_systems(Update, chase_camera);
+
+        app.world_mut().spawn((
+            Transform::from_translation(Vec3::new(0.0, 1000.0, 0.0)),
+            test_aircraft(),
+            PlayerControlled,
+        ));
+        let camera = app
+            .world_mut()
+            .spawn((
+                Transform::default(),
+                Projection::Perspective(PerspectiveProjection::default()),
+                ChaseCamera,
+            ))
+            .id();
+
+        // A large aim offset that would normally orbit the camera...
+        {
+            let mut aim = app.world_mut().resource_mut::<MouseAim>();
+            aim.engaged = true;
+            aim.target = Quat::from_rotation_y(-0.85) * Vec3::NEG_Z;
+        }
+        // ...and zoom fully in.
+        {
+            let mut zoom = app.world_mut().resource_mut::<ZoomState>();
+            zoom.active = true;
+            zoom.amount = 1.0;
+        }
+
+        for _ in 0..60 {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_secs_f32(0.05));
+            app.update();
+        }
+
+        let rotation = app.world().get::<Transform>(camera).unwrap().rotation;
+        let forward = rotation * Vec3::NEG_Z;
+        assert!(
+            forward.x.abs() < 0.02,
+            "the camera should stay on the nose while zoomed, got {forward:?}"
         );
     }
 }
