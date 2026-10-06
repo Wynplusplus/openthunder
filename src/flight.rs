@@ -46,7 +46,7 @@ const HARD_LANDING_SPEED: f32 = 3.5;
 const AIM_SENSITIVITY: f32 = 0.0015;
 /// When the reticle is within this angle of the nose (radians) and the player is
 /// steering manually, the aim rides along with the aircraft (WT behaviour).
-const AIM_FOLLOW_ANGLE: f32 = 0.04;
+const AIM_FOLLOW_ANGLE: f32 = 0.015;
 
 /// Canonical key names -> Bevy key codes. The same names are validated by the
 /// launcher against `openthunder::keybinds::SUPPORTED_KEYS`.
@@ -198,6 +198,10 @@ impl Bindings {
 pub struct MouseAim {
     pub engaged: bool,
     pub target: Vec3,
+    /// True while the reticle is riding along with the aircraft (see
+    /// [`AIM_FOLLOW_ANGLE`]): set when the aim is on the crosshair and a manual
+    /// key is held, cleared when the keys are released.
+    pub follow: bool,
 }
 
 /// System set for the flight simulation. Other systems (such as the camera) can
@@ -218,6 +222,7 @@ impl Plugin for FlightPlugin {
                     read_player_input,
                     reset_aircraft,
                     flight_dynamics.after(read_player_input),
+                    follow_aim.after(flight_dynamics),
                 )
                     .in_set(FlightSet),
             );
@@ -333,6 +338,8 @@ fn read_player_input(
             * Quat::from_rotation_x(-mouse_motion.delta.y * sensitivity)
             * local;
         mouse_aim.target = (camera_rotation * rotated).normalize_or_zero();
+        // Moving the mouse re-aims, so stop riding with the aircraft.
+        mouse_aim.follow = false;
     }
 
     // --- Throttle ---
@@ -402,15 +409,16 @@ fn read_player_input(
     // WT: with the reticle on the crosshair (the nose lined up with the aim) and
     // the player steering manually, the reticle rides along with the aircraft
     // instead of staying pinned in the world — so releasing the keys holds the
-    // new heading rather than snapping back to the old aim.
+    // new heading rather than snapping back to the old aim. The actual re-anchor
+    // happens in `follow_aim`, after the flight step, so the reticle does not lag
+    // the nose; here we only decide whether to follow. It latches while the keys
+    // are held, since a hard manoeuvre can exceed the entry angle in one frame.
     let manual =
         keyboard_pitch.abs() > 0.01 || keyboard_roll.abs() > 0.01 || keyboard_yaw.abs() > 0.01;
-    if manual
-        && !free_look.active
-        && mouse_aim.engaged
-        && nose.angle_between(mouse_aim.target) < AIM_FOLLOW_ANGLE
-    {
-        mouse_aim.target = nose;
+    if !manual || !mouse_aim.engaged || free_look.active {
+        mouse_aim.follow = false;
+    } else if mouse_aim.follow || nose.angle_between(mouse_aim.target) < AIM_FOLLOW_ANGLE {
+        mouse_aim.follow = true;
     }
 
     // The aim can be anywhere; just seed it on the nose the first time.
@@ -500,6 +508,19 @@ fn read_player_input(
         roll: roll.clamp(-1.0, 1.0),
         yaw: yaw.clamp(-1.0, 1.0),
     };
+}
+
+/// While the reticle is riding with the aircraft (`MouseAim::follow`), re-anchor
+/// it to the nose. Run after the flight step so the aim matches the aircraft's
+/// final heading and the cursor does not lag behind the crosshair.
+fn follow_aim(mut mouse_aim: ResMut<MouseAim>, query: Query<&Transform, With<PlayerControlled>>) {
+    if !mouse_aim.follow {
+        return;
+    }
+    let Ok(transform) = query.single() else {
+        return;
+    };
+    mouse_aim.target = transform.rotation * Vec3::NEG_Z;
 }
 
 /// Propeller torque-roll rate (rad/s): strongest at high power and low speed.
@@ -873,7 +894,7 @@ mod tests {
             .init_resource::<crate::camera::FreeLook>()
             .init_resource::<crate::camera::ZoomState>()
             .insert_resource(Bindings::from_config(&Keybinds::default()))
-            .add_systems(Update, read_player_input);
+            .add_systems(Update, (read_player_input, follow_aim).chain());
 
         let entity = app
             .world_mut()
@@ -1689,7 +1710,10 @@ mod tests {
             .init_resource::<crate::camera::FreeLook>()
             .init_resource::<crate::camera::ZoomState>()
             .insert_resource(Bindings::from_config(&Keybinds::default()))
-            .add_systems(Update, (read_player_input, flight_dynamics).chain());
+            .add_systems(
+                Update,
+                (read_player_input, flight_dynamics, follow_aim).chain(),
+            );
 
         let mut aircraft = Aircraft::new(corsair());
         aircraft.velocity = Vec3::NEG_Z * 150.0;
@@ -1770,6 +1794,46 @@ mod tests {
         assert!(
             aim.angle_between(target).to_degrees() < 2.0,
             "an off-crosshair reticle should stay put, aim = {aim:?}"
+        );
+    }
+
+    /// The reticle only snaps onto the crosshair when it is very close to it: a
+    /// small offset keeps it world-anchored even under manual input.
+    #[test]
+    fn the_reticle_snaps_only_when_very_close_to_the_crosshair() {
+        // Just inside the window: snaps onto the nose.
+        let (mut app, _entity) = input_app(0.0);
+        {
+            let mut aim = app.world_mut().resource_mut::<MouseAim>();
+            aim.engaged = true;
+            aim.target = Quat::from_rotation_y(-0.01) * Vec3::NEG_Z;
+        }
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ArrowUp);
+        app.update();
+        let aim = app.world().resource::<MouseAim>().target;
+        assert!(
+            aim.angle_between(Vec3::NEG_Z) < 1e-4,
+            "a reticle just off the crosshair should snap to the nose, aim = {aim:?}"
+        );
+
+        // Just outside: left alone.
+        let (mut app, _entity) = input_app(0.0);
+        let target = Quat::from_rotation_y(-0.03) * Vec3::NEG_Z;
+        {
+            let mut aim = app.world_mut().resource_mut::<MouseAim>();
+            aim.engaged = true;
+            aim.target = target;
+        }
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ArrowUp);
+        app.update();
+        let aim = app.world().resource::<MouseAim>().target;
+        assert!(
+            aim.angle_between(target) < 1e-4,
+            "a reticle off the crosshair should stay put, aim = {aim:?}"
         );
     }
 }
