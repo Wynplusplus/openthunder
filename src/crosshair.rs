@@ -1,17 +1,22 @@
-//! The gun crosshair (fixed at screen centre) and the mouse-aim cursor.
+//! The gun crosshair and the mouse-aim cursor.
 //!
-//! The chase camera always looks along the aircraft's nose, so the screen centre
-//! *is* the gun direction — the crosshair marks where the rounds go. The mouse
-//! instead moves a **world-space aim direction**, and its on-screen cursor drifts
-//! back to the centre as the aircraft turns toward it (like War Thunder). The OS
-//! cursor is hidden and locked while flying so the mouse is relative.
+//! The crosshair always marks **where the guns are pointing**: the aircraft's
+//! nose, projected on screen, so it tracks the real firing direction as the
+//! camera orbits (as in War Thunder). The mouse instead moves a **world-space
+//! aim direction**, and its on-screen cursor drifts back toward the crosshair as
+//! the aircraft turns onto it. The OS cursor is hidden and locked while flying
+//! so the mouse is relative.
 
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
+use crate::aircraft::PlayerControlled;
 use crate::camera::ChaseCamera;
 use crate::flight::MouseAim;
 use crate::menu::GameMenu;
+
+/// How far along the guns to project the crosshair (metres).
+const GUN_RANGE: f32 = 1000.0;
 
 #[derive(Component)]
 struct Crosshair;
@@ -25,73 +30,65 @@ pub struct CrosshairPlugin;
 impl Plugin for CrosshairPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_crosshair)
-            .add_systems(Update, (update_aim_cursor, manage_cursor));
+            .add_systems(Update, (update_crosshair, update_aim_cursor, manage_cursor));
     }
 }
 
 fn spawn_crosshair(mut commands: Commands) {
     let color = Color::srgba(0.95, 1.0, 0.95, 0.85);
 
+    // The gun crosshair — repositioned each frame at the screen point the guns
+    // are actually aimed at (the aircraft's nose), so it moves as the camera
+    // orbits and always shows where the rounds go.
     commands
         .spawn((
-            // Full-screen, transparent, centres its child.
             Node {
                 position_type: PositionType::Absolute,
-                width: percent(100),
-                height: percent(100),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
+                width: px(28),
+                height: px(28),
                 ..default()
             },
             // Below the menus (10/20) so they cover it.
             GlobalZIndex(5),
             Crosshair,
         ))
-        .with_children(|parent| {
-            parent
-                .spawn(Node {
+        .with_children(|reticle| {
+            // Horizontal bar.
+            reticle.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(0),
+                    top: px(13),
                     width: px(28),
+                    height: px(2),
+                    ..default()
+                },
+                BackgroundColor(color),
+            ));
+            // Vertical bar.
+            reticle.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(13),
+                    top: px(0),
+                    width: px(2),
                     height: px(28),
                     ..default()
-                })
-                .with_children(|reticle| {
-                    // Horizontal bar.
-                    reticle.spawn((
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: px(0),
-                            top: px(13),
-                            width: px(28),
-                            height: px(2),
-                            ..default()
-                        },
-                        BackgroundColor(color),
-                    ));
-                    // Vertical bar.
-                    reticle.spawn((
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: px(13),
-                            top: px(0),
-                            width: px(2),
-                            height: px(28),
-                            ..default()
-                        },
-                        BackgroundColor(color),
-                    ));
-                    // Centre dot.
-                    reticle.spawn((
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: px(12),
-                            top: px(12),
-                            width: px(4),
-                            height: px(4),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(1.0, 0.85, 0.3, 0.95)),
-                    ));
-                });
+                },
+                BackgroundColor(color),
+            ));
+            // Centre dot.
+            reticle.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(12),
+                    top: px(12),
+                    width: px(4),
+                    height: px(4),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(1.0, 0.85, 0.3, 0.95)),
+            ));
         });
 
     // The mouse-aim cursor: a small square outline that drifts back to centre.
@@ -108,6 +105,34 @@ fn spawn_crosshair(mut commands: Commands) {
         GlobalZIndex(6),
         AimCursor,
     ));
+}
+
+/// The world point the guns are aimed at, [`GUN_RANGE`] metres along the nose.
+fn gun_point(translation: Vec3, rotation: Quat) -> Vec3 {
+    translation + (rotation * Vec3::NEG_Z) * GUN_RANGE
+}
+
+/// Put the gun crosshair wherever the guns are actually pointing — the
+/// aircraft's nose — so it stays on the firing direction as the camera orbits.
+fn update_crosshair(
+    aircraft: Query<&Transform, (With<PlayerControlled>, Without<ChaseCamera>)>,
+    camera: Query<(&Camera, &GlobalTransform), With<ChaseCamera>>,
+    mut crosshair: Query<&mut Node, With<Crosshair>>,
+) {
+    let Ok(mut node) = crosshair.single_mut() else {
+        return;
+    };
+    let Ok(aircraft) = aircraft.single() else {
+        return;
+    };
+    let Ok((camera, camera_transform)) = camera.single() else {
+        return;
+    };
+    let point = gun_point(aircraft.translation, aircraft.rotation);
+    if let Ok(screen) = camera.world_to_viewport(camera_transform, point) {
+        node.left = px(screen.x - 14.0);
+        node.top = px(screen.y - 14.0);
+    }
 }
 
 /// Put the aim cursor wherever the aim direction projects on screen.
@@ -150,4 +175,116 @@ fn manage_cursor(menu: Res<GameMenu>, mut cursors: Query<&mut CursorOptions, Wit
     } else {
         CursorGrabMode::None
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::camera::{CameraProjection, PerspectiveProjection, RenderTargetInfo};
+
+    const SCREEN: UVec2 = UVec2::new(1280, 720);
+
+    /// Spawn a chase camera with a pre-computed projection and a fixed viewport,
+    /// so `world_to_viewport` works without a renderer.
+    fn spawn_camera(app: &mut App, translation: Vec3, rotation: Quat) {
+        let mut camera = Camera::default();
+        camera.computed.clip_from_view = PerspectiveProjection::default().get_clip_from_view();
+        camera.computed.target_info = Some(RenderTargetInfo {
+            physical_size: SCREEN,
+            scale_factor: 1.0,
+        });
+        app.world_mut().spawn((
+            camera,
+            GlobalTransform::from(Transform::from_translation(translation).with_rotation(rotation)),
+            ChaseCamera,
+        ));
+    }
+
+    fn spawn_aircraft(app: &mut App, rotation: Quat) -> Entity {
+        app.world_mut()
+            .spawn((
+                Transform::from_translation(Vec3::ZERO).with_rotation(rotation),
+                PlayerControlled,
+            ))
+            .id()
+    }
+
+    fn spawn_crosshair_node(app: &mut App) -> Entity {
+        app.world_mut().spawn((Node::default(), Crosshair)).id()
+    }
+
+    fn crosshair_px(app: &App, entity: Entity) -> (f32, f32) {
+        let node = app.world().get::<Node>(entity).unwrap();
+        let (Val::Px(left), Val::Px(top)) = (node.left, node.top) else {
+            panic!("the crosshair position should be set in pixels");
+        };
+        (left, top)
+    }
+
+    /// With the guns aimed straight ahead of a centred camera, the crosshair sits
+    /// at the centre of the screen.
+    #[test]
+    fn the_crosshair_sits_on_the_gun_direction() {
+        let mut app = App::new();
+        app.add_systems(Update, update_crosshair);
+
+        spawn_aircraft(&mut app, Quat::IDENTITY);
+        spawn_camera(&mut app, Vec3::new(0.0, 0.0, 18.0), Quat::IDENTITY);
+        let crosshair = spawn_crosshair_node(&mut app);
+
+        app.update();
+
+        // Centre of 1280x720 is (640, 360); the node is 28px, so its corner is
+        // offset by 14px.
+        let (left, top) = crosshair_px(&app, crosshair);
+        assert!((left - 626.0).abs() < 1.0, "left = {left}");
+        assert!((top - 346.0).abs() < 1.0, "top = {top}");
+    }
+
+    /// The crosshair tracks the nose, not the screen centre: turning the guns
+    /// right moves it right.
+    #[test]
+    fn the_crosshair_follows_the_nose() {
+        let mut app = App::new();
+        app.add_systems(Update, update_crosshair);
+
+        // Nose yawed to the right of the (fixed) camera.
+        spawn_aircraft(&mut app, Quat::from_rotation_y(-0.3));
+        spawn_camera(&mut app, Vec3::new(0.0, 0.0, 18.0), Quat::IDENTITY);
+        let crosshair = spawn_crosshair_node(&mut app);
+
+        app.update();
+
+        let (left, _) = crosshair_px(&app, crosshair);
+        assert!(
+            left > 626.0 + 10.0,
+            "the crosshair should follow the nose right, left = {left}"
+        );
+    }
+
+    /// Even when the camera orbits away from the nose (as it does when the aim
+    /// nears the screen edge), the crosshair stays on the gun direction.
+    #[test]
+    fn the_crosshair_stays_on_the_guns_when_the_camera_orbits() {
+        let mut app = App::new();
+        app.add_systems(Update, update_crosshair);
+
+        // Guns straight ahead, but the camera yawed to the left.
+        spawn_aircraft(&mut app, Quat::IDENTITY);
+        spawn_camera(
+            &mut app,
+            Vec3::new(0.0, 0.0, 18.0),
+            Quat::from_rotation_y(0.4),
+        );
+        let crosshair = spawn_crosshair_node(&mut app);
+
+        app.update();
+
+        // The nose now projects to the right of the (off-centre) view.
+        let (left, _) = crosshair_px(&app, crosshair);
+        assert!(
+            left > 626.0 + 10.0,
+            "the crosshair should leave the screen centre, left = {left}"
+        );
+    }
 }

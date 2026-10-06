@@ -195,8 +195,10 @@ In mouse-aim it does all of the following, and so do we:
   the instructor still keeps the aircraft inside its limits.
 
 The mouse moves a **world-space aim direction**, not a screen position, so the
-on-screen cursor **drifts back to the centre** as the nose catches up — exactly
-like War Thunder. The OS cursor is hidden and locked while flying (and released
+on-screen cursor **drifts back toward the gun crosshair** as the nose catches up
+— exactly like War Thunder. The **crosshair itself always marks the gun
+direction** (the nose projected on screen), so it leaves the screen centre as the
+camera orbits. The OS cursor is hidden and locked while flying (and released
 while the menu is open), so the mouse is relative and never gets stuck at the
 window edge.
 
@@ -325,8 +327,9 @@ Implemented in `src/combat.rs`.
   reads.
 - A destroyed fuselage finishes the aircraft: no thrust, no control, heavy drag.
 - The HUD shows remaining ammo, the armament and hit markers.
-- A fixed gun **crosshair** marks the centre of the screen — the chase camera
-  looks along the nose, so that *is* where the rounds go.
+- A gun **crosshair** always marks **where the guns are pointing**: the nose is
+  projected on screen each frame, so it tracks the real firing direction (and the
+  camera orbit) rather than sitting fixed at screen centre.
 
 ### Test targets
 

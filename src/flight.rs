@@ -1433,7 +1433,7 @@ mod tests {
             .id();
 
         let mut lifted_off = false;
-        for i in 0..2500 {
+        for _ in 0..2500 {
             app.world_mut()
                 .resource_mut::<Time>()
                 .advance_by(std::time::Duration::from_secs_f32(0.02));
