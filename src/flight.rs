@@ -538,7 +538,9 @@ fn current_bank(rotation: Quat) -> f32 {
 
 /// Instructor that points the nose at `desired_dir` (world space): it banks
 /// toward the target and pulls, then levels the wings once the nose is on
-/// target. Returns `(pitch, roll, yaw)` control inputs.
+/// target. The rudder both helps point the nose (fine aiming) and keeps the
+/// turn coordinated — it is applied with the bank, the way a pilot moves the
+/// rudder alongside the ailerons. Returns `(pitch, roll, yaw)` control inputs.
 fn aim_controls(rotation: Quat, desired_dir: Vec3, bank: f32) -> (f32, f32, f32) {
     // Where the target is, expressed in the aircraft's body frame.
     let local = rotation.inverse() * desired_dir.normalize_or_zero();
@@ -553,7 +555,10 @@ fn aim_controls(rotation: Quat, desired_dir: Vec3, bank: f32) -> (f32, f32, f32)
     let roll = ((desired_bank - bank) * 3.0).clamp(-1.0, 1.0);
 
     let pitch = (elevation * 2.5).clamp(-1.0, 1.0);
-    let yaw = (azimuth * 0.3).clamp(-1.0, 1.0);
+
+    // Rudder: point the nose at the aim, and yaw the nose around a banked turn so
+    // the turn stays coordinated (the rudder follows the bank).
+    let yaw = (azimuth * 0.5 + bank * 0.4).clamp(-1.0, 1.0);
     (pitch, roll, yaw)
 }
 
@@ -982,6 +987,25 @@ mod tests {
     fn current_bank_is_positive_for_a_right_bank() {
         assert!(current_bank(Quat::from_rotation_z(-0.6)) > 0.0);
         assert!(current_bank(Quat::from_rotation_z(0.6)) < 0.0);
+    }
+
+    /// The instructor uses the rudder: it points the nose at the aim, and it
+    /// coordinates a banked turn (the rudder follows the bank).
+    #[test]
+    fn aim_controls_use_the_rudder() {
+        // Aiming to the right yaws the nose right with real authority.
+        let target = Quat::from_rotation_y(-0.5) * Vec3::NEG_Z;
+        let (_, _, yaw) = aim_controls(Quat::IDENTITY, target, 0.0);
+        assert!(yaw >= 0.2, "aiming right should use the rudder, got {yaw}");
+
+        // On target but banked right: the rudder coordinates the turn.
+        let rotation = Quat::from_rotation_z(-0.6);
+        let forward = rotation * Vec3::NEG_Z;
+        let (_, _, yaw) = aim_controls(rotation, forward, current_bank(rotation));
+        assert!(
+            yaw > 0.0,
+            "a right bank should apply right rudder, got {yaw}"
+        );
     }
 
     #[test]

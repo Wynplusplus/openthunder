@@ -197,6 +197,8 @@ In mouse-aim it does all of the following, and so do we:
   right on the crosshair (within a degree) and you steer manually, it **rides
   along with the aircraft** (WT behaviour), so releasing the keys holds the new
   heading instead of snapping back to the old aim.
+- **Uses the rudder**: it yaws the nose onto the aim and keeps a banked turn
+  coordinated, applying the rudder alongside the ailerons (as in WT).
 
 The mouse moves a **world-space aim direction**, not a screen position, so the
 on-screen cursor **drifts back toward the gun crosshair** as the nose catches up
