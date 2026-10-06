@@ -28,9 +28,9 @@ const NORMAL_FOV: f32 = std::f32::consts::FRAC_PI_4;
 const ZOOM_FOV: f32 = 0.32;
 /// The camera only starts orbiting toward the aim once it is this far from the
 /// nose (radians) — a dead-zone around the centre of the screen.
-const CAMERA_ORBIT_DEADZONE: f32 = 0.2;
+const CAMERA_ORBIT_DEADZONE: f32 = 0.35;
 /// ...and orbits fully by this offset (radians), near the edge of the screen.
-const CAMERA_ORBIT_EDGE: f32 = 0.5;
+const CAMERA_ORBIT_EDGE: f32 = 0.7;
 
 /// Marks the camera that follows the player's aircraft.
 #[derive(Component)]
