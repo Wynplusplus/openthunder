@@ -35,7 +35,7 @@ use bevy::input::mouse::{AccumulatedMouseMotion, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
-use openthunder::map_doc::{MapDoc, MapObject, ObjectKind, SpawnPoint};
+use openthunder::map_doc::{EmbeddedPlane, MapDoc, MapObject, ObjectKind, SpawnPoint};
 use openthunder::plane_config::PlaneConfig;
 
 // Dock sizes (logical pixels) — the viewport is everything inside them.
@@ -95,7 +95,7 @@ enum Focus {
     MapName,
     PlaneName,
     DialogName,
-    DialogModel,
+    DialogPath,
 }
 
 #[derive(Default)]
@@ -104,17 +104,22 @@ struct TextInput {
     buffer: String,
 }
 
-/// The modal "new plane" / "set model" dialog.
+/// The modal dialog shown over the editor.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DialogKind {
+    /// Create a plane in the mission's list.
     NewPlane,
+    /// Embed a model file into the selected plane.
     SetModel,
+    /// Load a `.plane` file into the mission's list.
+    ImportPlane,
 }
 
 struct Dialog {
     kind: DialogKind,
     name: String,
-    model: String,
+    /// A filesystem path: a model file to embed, or a `.plane` file to import.
+    path: String,
     focus: Focus,
 }
 
@@ -146,7 +151,7 @@ struct Editor {
     server_dir: PathBuf,
     server: Option<Child>,
     mode: Mode,
-    planes: Vec<PlaneConfig>,
+    /// Index into `doc.planes` (the mission's embedded plane list).
     plane_selected: usize,
     dialog: Option<Dialog>,
     input: TextInput,
@@ -157,7 +162,6 @@ struct Editor {
 impl Editor {
     fn new() -> Self {
         let server_dir = server_dir();
-        let planes = load_planes(&server_dir);
         Self {
             doc: MapDoc::new("untitled"),
             selected: None,
@@ -169,7 +173,6 @@ impl Editor {
             server_dir,
             server: None,
             mode: Mode::Map,
-            planes,
             plane_selected: 0,
             dialog: None,
             input: TextInput::default(),
@@ -261,6 +264,8 @@ enum Action {
     SelectPlane(usize),
     OpenDialog(DialogKind),
     RenamePlane,
+    ExportPlane,
+    AddBuiltinPlanes,
     DeletePlane,
     FocusDialog(Focus),
     DialogConfirm,
@@ -285,33 +290,25 @@ fn server_dir() -> PathBuf {
     PathBuf::from("..")
 }
 
-fn load_planes(server_dir: &Path) -> Vec<PlaneConfig> {
-    let mut planes = Vec::new();
-    let Ok(entries) = std::fs::read_dir(server_dir.join("planes")) else {
-        return planes;
-    };
-    let mut paths: Vec<PathBuf> = entries
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| path.is_dir())
-        .collect();
-    paths.sort();
-    for path in paths {
-        let id = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("plane")
-            .to_string();
-        let plane = match std::fs::read_to_string(path.join("plane.conf")) {
-            Ok(text) => PlaneConfig::parse(&id, &text),
-            Err(_) => PlaneConfig {
-                id: id.clone(),
-                name: id.clone(),
-                ..Default::default()
-            },
-        };
-        planes.push(plane);
-    }
-    planes
+/// The built-in planes as embedded mission planes (config text, no models).
+fn builtin_planes() -> Vec<EmbeddedPlane> {
+    openthunder::plane_config::default_planes()
+        .iter()
+        .map(|config| EmbeddedPlane {
+            id: config.id.clone(),
+            config: config.to_config_string(),
+            model_name: None,
+            model: None,
+        })
+        .collect()
+}
+
+/// Read a model file from disk into `(file name, bytes)`.
+fn read_model_file(path: &str) -> Option<(String, Vec<u8>)> {
+    let path = Path::new(path);
+    let name = path.file_name()?.to_str()?.to_string();
+    let bytes = std::fs::read(path).ok()?;
+    Some((name, bytes))
 }
 
 fn save_map(editor: &mut Editor) {
@@ -346,29 +343,40 @@ fn load_map(editor: &mut Editor) {
     }
 }
 
-fn save_plane(editor: &mut Editor) {
-    let Some(plane) = editor.planes.get(editor.plane_selected) else {
+/// Export the selected mission plane to a standalone, self-contained `.plane`
+/// file (config + model).
+fn export_plane(editor: &mut Editor) {
+    let Some(plane) = editor.doc.planes.get(editor.plane_selected) else {
+        editor.status = "No plane selected.".to_string();
         return;
     };
-    let dir = editor.planes_dir().join(&plane.id);
+    let dir = editor.planes_dir();
     if let Err(err) = std::fs::create_dir_all(&dir) {
         editor.status = format!("Could not create {}: {err}", dir.display());
         return;
     }
-    match std::fs::write(dir.join("plane.conf"), plane.to_config_string()) {
-        Ok(()) => editor.status = format!("Saved plane '{}'.", plane.id),
-        Err(err) => editor.status = format!("Save failed: {err}"),
+    let path = dir.join(format!("{}.plane", plane.id));
+    match std::fs::write(&path, plane.to_file_string()) {
+        Ok(()) => editor.status = format!("Exported plane to {}", path.display()),
+        Err(err) => editor.status = format!("Export failed: {err}"),
     }
 }
 
-fn slug(value: &str) -> String {
-    let slug: String = value
-        .trim()
-        .to_lowercase()
-        .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
-        .collect();
-    slug.trim_matches('-').to_string()
+/// Load a `.plane` file into the mission's plane list.
+fn import_plane(editor: &mut Editor, path: &str) {
+    match std::fs::read_to_string(path) {
+        Ok(text) => {
+            let plane = EmbeddedPlane::parse_file(&text);
+            let name = plane.display_name();
+            let id = plane.id.clone();
+            editor.doc.planes.push(plane);
+            editor.plane_selected = editor.doc.planes.len() - 1;
+            editor.dirty = true;
+            editor.ui_dirty = true;
+            editor.status = format!("Imported plane '{name}' ({id}).");
+        }
+        Err(err) => editor.status = format!("Import failed: {err}"),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -877,22 +885,24 @@ fn apply_action(editor: &mut Editor, action: Action) {
             editor.ui_dirty = true;
         }
         Action::OpenDialog(kind) => {
+            let (name, focus) = match kind {
+                DialogKind::NewPlane => ("New plane".to_string(), Focus::DialogName),
+                DialogKind::SetModel => (
+                    editor
+                        .doc
+                        .planes
+                        .get(editor.plane_selected)
+                        .map(|plane| plane.display_name())
+                        .unwrap_or_default(),
+                    Focus::DialogPath,
+                ),
+                DialogKind::ImportPlane => ("Import plane file".to_string(), Focus::DialogPath),
+            };
             editor.dialog = Some(Dialog {
                 kind,
-                name: editor
-                    .planes
-                    .get(editor.plane_selected)
-                    .map(|plane| plane.name.clone())
-                    .unwrap_or_else(|| "New plane".to_string()),
-                model: editor
-                    .planes
-                    .get(editor.plane_selected)
-                    .and_then(|plane| plane.model.clone())
-                    .unwrap_or_default(),
-                focus: match kind {
-                    DialogKind::NewPlane => Focus::DialogName,
-                    DialogKind::SetModel => Focus::DialogModel,
-                },
+                name,
+                path: String::new(),
+                focus,
             });
             editor.input.field = None;
             editor.ui_dirty = true;
@@ -900,24 +910,29 @@ fn apply_action(editor: &mut Editor, action: Action) {
         Action::RenamePlane => {
             editor.input.field = Some(Focus::PlaneName);
             editor.input.buffer = editor
+                .doc
                 .planes
                 .get(editor.plane_selected)
-                .map(|plane| plane.name.clone())
+                .map(|plane| plane.display_name())
                 .unwrap_or_default();
             editor.status = "Type the new plane name, Enter to apply.".to_string();
         }
-        Action::DeletePlane => {
-            let Some(id) = editor
-                .planes
-                .get(editor.plane_selected)
-                .map(|plane| plane.id.clone())
-            else {
-                return;
-            };
-            let _ = std::fs::remove_dir_all(editor.planes_dir().join(&id));
-            editor.planes.remove(editor.plane_selected);
+        Action::ExportPlane => export_plane(editor),
+        Action::AddBuiltinPlanes => {
+            let builtin = builtin_planes();
+            let count = builtin.len();
+            editor.doc.planes.extend(builtin);
+            editor.dirty = true;
             editor.ui_dirty = true;
-            editor.status = format!("Deleted plane '{id}'.");
+            editor.status = format!("Added {count} built-in planes to the mission.");
+        }
+        Action::DeletePlane => {
+            if editor.plane_selected < editor.doc.planes.len() {
+                let id = editor.doc.planes.remove(editor.plane_selected).id;
+                editor.dirty = true;
+                editor.ui_dirty = true;
+                editor.status = format!("Removed plane '{id}' from the mission.");
+            }
         }
         Action::FocusDialog(focus) => {
             if let Some(dialog) = editor.dialog.as_mut() {
@@ -943,28 +958,57 @@ fn confirm_dialog(editor: &mut Editor) {
             let name = dialog.name.trim();
             if name.is_empty() {
                 editor.status = "Plane name cannot be empty.".to_string();
-            } else {
-                let id = slug(name);
-                let model = dialog.model.trim();
-                let plane = PlaneConfig {
-                    id: id.clone(),
-                    name: name.to_string(),
-                    model: (!model.is_empty()).then(|| model.to_string()),
-                    ..Default::default()
-                };
-                editor.planes.push(plane);
-                editor.plane_selected = editor.planes.len() - 1;
-                save_plane(editor);
-                editor.status = format!("Created plane '{id}'.");
+                editor.ui_dirty = true;
+                return;
             }
+            let id = openthunder::map_doc::slug(name);
+            let config = PlaneConfig {
+                id: id.clone(),
+                name: name.to_string(),
+                ..Default::default()
+            };
+            // Optionally embed a model from a file on disk.
+            let path = dialog.path.trim();
+            let model = (!path.is_empty()).then(|| read_model_file(path)).flatten();
+            if !path.is_empty() && model.is_none() {
+                editor.status =
+                    format!("Could not read model '{path}'; plane created without one.");
+            }
+            let (model_name, model) = match model {
+                Some((name, bytes)) => (Some(name), Some(bytes)),
+                None => (None, None),
+            };
+            editor.doc.planes.push(EmbeddedPlane {
+                id: id.clone(),
+                config: config.to_config_string(),
+                model_name,
+                model,
+            });
+            editor.plane_selected = editor.doc.planes.len() - 1;
+            editor.dirty = true;
+            editor.status = format!("Created plane '{id}'.");
         }
         DialogKind::SetModel => {
-            if let Some(plane) = editor.planes.get_mut(editor.plane_selected) {
-                let model = dialog.model.trim();
-                plane.model = (!model.is_empty()).then(|| model.to_string());
-                save_plane(editor);
+            let path = dialog.path.trim();
+            if path.is_empty() {
+                if let Some(plane) = editor.doc.planes.get_mut(editor.plane_selected) {
+                    plane.model = None;
+                    plane.model_name = None;
+                    editor.dirty = true;
+                    editor.status = "Cleared the plane's model.".to_string();
+                }
+            } else if let Some((name, bytes)) = read_model_file(path) {
+                if let Some(plane) = editor.doc.planes.get_mut(editor.plane_selected) {
+                    plane.model_name = Some(name);
+                    plane.model = Some(bytes);
+                    editor.dirty = true;
+                    editor.status = "Embedded the model in the mission.".to_string();
+                }
+            } else {
+                editor.status = format!("Could not read model '{path}'.");
             }
         }
+        DialogKind::ImportPlane => import_plane(editor, dialog.path.trim()),
     }
     editor.ui_dirty = true;
 }
@@ -1050,19 +1094,23 @@ fn rebuild_ui(
     if let Ok(entity) = planes.single() {
         commands.entity(entity).despawn_related::<Children>();
         commands.entity(entity).with_children(|parent| {
-            parent.spawn(text("Planes", 15.0, TEXT));
+            parent.spawn(text("Mission planes", 15.0, TEXT));
             parent.spawn(text(
-                "Click a plane to select it. \"New plane…\" opens a dialog.",
+                "The mission carries each plane's config and model, so the server needs no setup. Click one to select it.",
                 12.0,
                 DIM,
             ));
             spacer_h(parent, 6.0);
-            for (index, plane) in editor.planes.iter().enumerate() {
-                let label = format!(
-                    "{}  ({})",
-                    plane.name,
-                    plane.model.as_deref().unwrap_or("procedural")
-                );
+            if editor.doc.planes.is_empty() {
+                parent.spawn(text("(no planes in the mission yet)", 12.0, DIM));
+            }
+            for (index, plane) in editor.doc.planes.iter().enumerate() {
+                let model = plane
+                    .model
+                    .as_ref()
+                    .map(|bytes| format!("model {} KiB", bytes.len() / 1024))
+                    .unwrap_or_else(|| "procedural".to_string());
+                let label = format!("{}  ({model})", plane.display_name());
                 list_row(
                     parent,
                     &label,
@@ -1080,10 +1128,22 @@ fn rebuild_ui(
                 );
                 button(
                     row,
+                    "Import .plane…",
+                    Action::OpenDialog(DialogKind::ImportPlane),
+                    false,
+                );
+            });
+            row(parent, |row| {
+                button(
+                    row,
                     "Set model…",
                     Action::OpenDialog(DialogKind::SetModel),
                     false,
                 );
+                button(row, "Export .plane", Action::ExportPlane, false);
+            });
+            row(parent, |row| {
+                button(row, "Add built-ins", Action::AddBuiltinPlanes, false);
                 button(row, "Rename", Action::RenamePlane, false);
                 button(row, "Delete", Action::DeletePlane, false);
             });
@@ -1107,7 +1167,8 @@ fn rebuild_ui(
         commands.entity(entity).with_children(|parent| {
             let title = match dialog.kind {
                 DialogKind::NewPlane => "New plane",
-                DialogKind::SetModel => "Set model",
+                DialogKind::SetModel => "Embed a model",
+                DialogKind::ImportPlane => "Import a .plane file",
             };
             parent.spawn(text(title, 18.0, TEXT));
             if dialog.kind == DialogKind::NewPlane {
@@ -1119,18 +1180,28 @@ fn rebuild_ui(
                     Action::FocusDialog(Focus::DialogName),
                 );
             }
+            let (label, hint) = match dialog.kind {
+                DialogKind::SetModel => (
+                    "Model file (glTF/GLB)",
+                    "Path to a .glb/.gltf file to embed in the mission. Leave empty to clear.",
+                ),
+                DialogKind::ImportPlane => (
+                    "Plane file",
+                    "Path to a .plane file to load into the mission's plane list.",
+                ),
+                DialogKind::NewPlane => (
+                    "Model file (optional)",
+                    "Path to a .glb/.gltf file to embed (optional).",
+                ),
+            };
             field_row(
                 parent,
-                "Model (glTF/GLB)",
-                &dialog.model,
-                dialog.focus == Focus::DialogModel,
-                Action::FocusDialog(Focus::DialogModel),
+                label,
+                &dialog.path,
+                dialog.focus == Focus::DialogPath,
+                Action::FocusDialog(Focus::DialogPath),
             );
-            parent.spawn(text(
-                "Model path is relative to the client's assets/ (optional).",
-                11.0,
-                DIM,
-            ));
+            parent.spawn(text(hint, 11.0, DIM));
             spacer_h(parent, 6.0);
             row(parent, |row| {
                 button(row, "Create", Action::DialogConfirm, true);
@@ -1493,10 +1564,13 @@ fn apply_text(editor: &mut Editor, field: Focus, value: String) {
             }
         }
         Focus::PlaneName => {
-            if let Some(plane) = editor.planes.get_mut(editor.plane_selected) {
-                if !value.is_empty() {
-                    plane.name = value;
-                    save_plane(editor);
+            if !value.is_empty() {
+                if let Some(plane) = editor.doc.planes.get_mut(editor.plane_selected) {
+                    let mut config = PlaneConfig::parse(&plane.id, &plane.config);
+                    config.name = value;
+                    plane.config = config.to_config_string();
+                    editor.dirty = true;
+                    editor.status = "Renamed plane.".to_string();
                 }
             }
         }
@@ -1505,9 +1579,9 @@ fn apply_text(editor: &mut Editor, field: Focus, value: String) {
                 dialog.name = value;
             }
         }
-        Focus::DialogModel => {
+        Focus::DialogPath => {
             if let Some(dialog) = editor.dialog.as_mut() {
-                dialog.model = value;
+                dialog.path = value;
             }
         }
     }

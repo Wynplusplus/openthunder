@@ -207,6 +207,148 @@ impl Default for Terrain {
     }
 }
 
+/// A plane embedded in a mission (or exported as its own file): its full
+/// `plane.conf` text plus, optionally, the actual model bytes so no external
+/// files are needed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EmbeddedPlane {
+    /// Directory id, e.g. `f4u-4-corsair`.
+    pub id: String,
+    /// The complete `plane.conf` text (flight model, armament, model params).
+    pub config: String,
+    /// The model's file name, e.g. `fighter.glb` (kept so the extension/format
+    /// survives a round trip). `None` means "procedural mesh only".
+    pub model_name: Option<String>,
+    /// The raw glTF/GLB bytes, embedded so the mission is self-contained.
+    pub model: Option<Vec<u8>>,
+}
+
+impl EmbeddedPlane {
+    /// The plane's display name, read from its config.
+    pub fn display_name(&self) -> String {
+        crate::plane_config::PlaneConfig::parse(&self.id, &self.config).name
+    }
+
+    /// Serialize as a standalone, self-contained plane file.
+    pub fn to_file_string(&self) -> String {
+        let mut out = String::new();
+        let _ = writeln!(out, "# OpenThunder plane — {}", self.display_name());
+        let _ = writeln!(out, "id = {}", self.id);
+        out.push_str(&self.config);
+        if !self.config.ends_with('\n') {
+            out.push('\n');
+        }
+        if let Some(name) = &self.model_name {
+            let _ = writeln!(out, "model_name = {name}");
+        }
+        if let Some(model) = &self.model {
+            let _ = writeln!(out, "model_data = {}", crate::base64::encode(model));
+        }
+        out
+    }
+
+    /// Parse a standalone plane file (or the body of a `[plane <id>]` block).
+    pub fn parse_file(text: &str) -> Self {
+        let mut plane = EmbeddedPlane {
+            id: String::new(),
+            config: String::new(),
+            model_name: None,
+            model: None,
+        };
+        let mut model_data: Option<String> = None;
+        for raw in text.lines() {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            if let Some((key, value)) = trimmed.split_once('=') {
+                match key.trim() {
+                    "id" => {
+                        plane.id = value.trim().to_string();
+                        continue;
+                    }
+                    "model_name" => {
+                        plane.model_name = Some(value.trim().to_string());
+                        continue;
+                    }
+                    "model_data" => {
+                        model_data = Some(value.trim().to_string());
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+            plane.config.push_str(raw);
+            plane.config.push('\n');
+        }
+        plane.model = model_data.as_deref().and_then(crate::base64::decode);
+        if plane.id.is_empty() {
+            plane.id = slug(&plane.display_name());
+        }
+        plane
+    }
+}
+
+/// A filesystem/asset-safe id from a display name.
+pub fn slug(name: &str) -> String {
+    let slug: String = name
+        .trim()
+        .to_lowercase()
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+        .collect();
+    let slug = slug.trim_matches('-').to_string();
+    if slug.is_empty() {
+        "plane".to_string()
+    } else {
+        slug
+    }
+}
+
+/// Which `[section]` the parser is currently in.
+#[derive(Clone, Copy, PartialEq)]
+enum Section {
+    Header,
+    Terrain,
+    Spawn,
+    Object,
+    Plane,
+}
+
+/// Incremental parser state for [`MapDoc::parse`].
+struct ParseState {
+    doc: MapDoc,
+    section: Section,
+    spawn: SpawnPoint,
+    object: MapObject,
+    scale_set: bool,
+    color_set: bool,
+    plane_id: String,
+    plane_config: String,
+    plane_model_name: Option<String>,
+    plane_model_data: Option<String>,
+}
+
+impl ParseState {
+    /// Commit the current section's entry and leave the section.
+    fn flush(&mut self) {
+        match self.section {
+            Section::Spawn => self.doc.spawns.push(self.spawn.clone()),
+            Section::Object => self.doc.objects.push(self.object.clone()),
+            Section::Plane => self.doc.planes.push(EmbeddedPlane {
+                id: self.plane_id.clone(),
+                config: std::mem::take(&mut self.plane_config),
+                model_name: self.plane_model_name.take(),
+                model: self
+                    .plane_model_data
+                    .take()
+                    .and_then(|data| crate::base64::decode(&data)),
+            }),
+            _ => {}
+        }
+    }
+}
+
 /// A parsed map.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MapDoc {
@@ -219,6 +361,8 @@ pub struct MapDoc {
     pub terrain: Terrain,
     pub spawns: Vec<SpawnPoint>,
     pub objects: Vec<MapObject>,
+    /// Planes embedded in the mission (configs + models), so it is self-contained.
+    pub planes: Vec<EmbeddedPlane>,
 }
 
 impl MapDoc {
@@ -232,6 +376,7 @@ impl MapDoc {
             terrain: Terrain::default(),
             spawns: Vec::new(),
             objects: Vec::new(),
+            planes: Vec::new(),
         }
     }
 
@@ -257,34 +402,27 @@ impl MapDoc {
     }
 
     pub fn parse(id: &str, text: &str) -> Self {
-        let mut doc = MapDoc {
-            id: id.to_string(),
-            name: id.to_string(),
-            gamemode: "free_flight".to_string(),
-            rules: Vec::new(),
-            terrain: Terrain::default(),
-            spawns: Vec::new(),
-            objects: Vec::new(),
+        let mut state = ParseState {
+            doc: MapDoc {
+                id: id.to_string(),
+                name: id.to_string(),
+                gamemode: "free_flight".to_string(),
+                rules: Vec::new(),
+                terrain: Terrain::default(),
+                spawns: Vec::new(),
+                objects: Vec::new(),
+                planes: Vec::new(),
+            },
+            section: Section::Header,
+            spawn: SpawnPoint::new(255, [0.0; 3]),
+            object: MapObject::new(ObjectKind::default(), [0.0; 3]),
+            scale_set: false,
+            color_set: false,
+            plane_id: String::new(),
+            plane_config: String::new(),
+            plane_model_name: None,
+            plane_model_data: None,
         };
-
-        // Which section the current `key = value` lines belong to.
-        #[derive(PartialEq)]
-        enum Section {
-            Header,
-            Terrain,
-            Spawn,
-            Object,
-        }
-        let mut section = Section::Header;
-        let mut spawn = SpawnPoint::new(255, [0.0; 3]);
-        let mut object = MapObject::new(ObjectKind::default(), [0.0; 3]);
-        // Whether scale/colour were written explicitly (so a later `kind` line
-        // can still apply that kind's defaults).
-        let mut scale_set = false;
-        let mut color_set = false;
-
-        let flush_spawn = |doc: &mut MapDoc, spawn: &SpawnPoint| doc.spawns.push(spawn.clone());
-        let flush_object = |doc: &mut MapDoc, object: &MapObject| doc.objects.push(object.clone());
 
         for raw in text.lines() {
             let line = raw.trim();
@@ -292,26 +430,37 @@ impl MapDoc {
                 continue;
             }
             if let Some(inner) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-                // Leaving the previous section: flush its entry.
-                match section {
-                    Section::Spawn => flush_spawn(&mut doc, &spawn),
-                    Section::Object => flush_object(&mut doc, &object),
-                    _ => {}
+                let inner = inner.trim();
+                let lower = inner.to_lowercase();
+                // `[gun N]` inside a plane block is part of the plane's config.
+                if state.section == Section::Plane && lower.starts_with("gun") {
+                    state.plane_config.push_str(line);
+                    state.plane_config.push('\n');
+                    continue;
                 }
-                section = match inner.trim().to_lowercase().as_str() {
-                    "terrain" => Section::Terrain,
-                    "spawn" => {
-                        spawn = SpawnPoint::new(255, [0.0; 3]);
-                        Section::Spawn
-                    }
-                    "object" => {
-                        object = MapObject::new(ObjectKind::default(), [0.0; 3]);
-                        scale_set = false;
-                        color_set = false;
-                        Section::Object
-                    }
-                    _ => Section::Header,
-                };
+                state.flush();
+                if let Some(rest) = inner.strip_prefix("plane") {
+                    state.plane_id = rest.trim().to_string();
+                    state.plane_config.clear();
+                    state.plane_model_name = None;
+                    state.plane_model_data = None;
+                    state.section = Section::Plane;
+                } else {
+                    state.section = match lower.as_str() {
+                        "terrain" => Section::Terrain,
+                        "spawn" => {
+                            state.spawn = SpawnPoint::new(255, [0.0; 3]);
+                            Section::Spawn
+                        }
+                        "object" => {
+                            state.object = MapObject::new(ObjectKind::default(), [0.0; 3]);
+                            state.scale_set = false;
+                            state.color_set = false;
+                            Section::Object
+                        }
+                        _ => Section::Header,
+                    };
+                }
                 continue;
             }
             let Some((key, value)) = line.split_once('=') else {
@@ -319,59 +468,73 @@ impl MapDoc {
             };
             let key = key.trim();
             let value = value.trim();
-            match section {
+            match state.section {
                 Section::Header => match key {
-                    "name" => doc.name = value.to_string(),
-                    "gamemode" => doc.gamemode = value.to_string(),
-                    other => doc.rules.push((other.to_string(), value.to_string())),
+                    "name" => state.doc.name = value.to_string(),
+                    "gamemode" => state.doc.gamemode = value.to_string(),
+                    other => state.doc.rules.push((other.to_string(), value.to_string())),
                 },
                 Section::Terrain => match key {
-                    "ground_color" => set_color(&mut doc.terrain.ground_color, value),
-                    "water_color" => set_color(&mut doc.terrain.water_color, value),
-                    "water" => doc.terrain.water = parse_bool(value).unwrap_or(doc.terrain.water),
-                    "size" => doc.terrain.size = parse_f32(value).unwrap_or(doc.terrain.size),
+                    "ground_color" => set_color(&mut state.doc.terrain.ground_color, value),
+                    "water_color" => set_color(&mut state.doc.terrain.water_color, value),
+                    "water" => {
+                        state.doc.terrain.water =
+                            parse_bool(value).unwrap_or(state.doc.terrain.water)
+                    }
+                    "size" => {
+                        state.doc.terrain.size = parse_f32(value).unwrap_or(state.doc.terrain.size)
+                    }
                     _ => {}
                 },
                 Section::Spawn => match key {
-                    "team" => spawn.team = value.parse().unwrap_or(spawn.team),
-                    "position" => set_vec3(&mut spawn.position, value),
-                    "heading" => spawn.heading = parse_f32(value).unwrap_or(spawn.heading),
+                    "team" => state.spawn.team = value.parse().unwrap_or(state.spawn.team),
+                    "position" => set_vec3(&mut state.spawn.position, value),
+                    "heading" => {
+                        state.spawn.heading = parse_f32(value).unwrap_or(state.spawn.heading)
+                    }
                     _ => {}
                 },
                 Section::Object => match key {
                     "kind" => {
                         if let Some(kind) = ObjectKind::parse(value) {
-                            object.kind = kind;
-                            if !scale_set {
-                                object.scale = kind.default_scale();
+                            state.object.kind = kind;
+                            if !state.scale_set {
+                                state.object.scale = kind.default_scale();
                             }
-                            if !color_set {
-                                object.color = kind.default_color();
+                            if !state.color_set {
+                                state.object.color = kind.default_color();
                             }
                         }
                     }
-                    "position" => set_vec3(&mut object.position, value),
-                    "yaw" | "rotation" => object.yaw = parse_f32(value).unwrap_or(object.yaw),
+                    "position" => set_vec3(&mut state.object.position, value),
+                    "yaw" | "rotation" => {
+                        state.object.yaw = parse_f32(value).unwrap_or(state.object.yaw)
+                    }
                     "scale" => {
-                        set_vec3(&mut object.scale, value);
-                        scale_set = true;
+                        set_vec3(&mut state.object.scale, value);
+                        state.scale_set = true;
                     }
                     "color" => {
-                        set_color(&mut object.color, value);
-                        color_set = true;
+                        set_color(&mut state.object.color, value);
+                        state.color_set = true;
                     }
-                    "model" => object.model = Some(value.to_string()),
+                    "model" => state.object.model = Some(value.to_string()),
                     _ => {}
+                },
+                // Everything else in a plane block (name, mass, [gun N], …) is
+                // the plane's config; `model_name`/`model_data` are metadata.
+                Section::Plane => match key {
+                    "model_name" => state.plane_model_name = Some(value.to_string()),
+                    "model_data" => state.plane_model_data = Some(value.to_string()),
+                    _ => {
+                        state.plane_config.push_str(line);
+                        state.plane_config.push('\n');
+                    }
                 },
             }
         }
-        // Flush a trailing section.
-        match section {
-            Section::Spawn => flush_spawn(&mut doc, &spawn),
-            Section::Object => flush_object(&mut doc, &object),
-            _ => {}
-        }
-        doc
+        state.flush();
+        state.doc
     }
 
     /// Serialize back to the map format.
@@ -386,6 +549,20 @@ impl MapDoc {
         let _ = writeln!(out, "gamemode = {}", self.gamemode);
         for (key, value) in &self.rules {
             let _ = writeln!(out, "{key} = {value}");
+        }
+
+        for plane in &self.planes {
+            let _ = writeln!(out, "\n[plane {}]", plane.id);
+            out.push_str(&plane.config);
+            if !plane.config.ends_with('\n') {
+                out.push('\n');
+            }
+            if let Some(name) = &plane.model_name {
+                let _ = writeln!(out, "model_name = {name}");
+            }
+            if let Some(model) = &plane.model {
+                let _ = writeln!(out, "model_data = {}", crate::base64::encode(model));
+            }
         }
 
         if self.terrain != Terrain::default() {
@@ -531,5 +708,44 @@ mod tests {
         for kind in ObjectKind::ALL {
             assert_eq!(ObjectKind::parse(kind.id()), Some(kind));
         }
+    }
+
+    #[test]
+    fn round_trips_embedded_planes_with_models() {
+        let mut doc = MapDoc::new("m");
+        doc.planes.push(EmbeddedPlane {
+            id: "f4u-4-corsair".into(),
+            config: "name = F4U-4 Corsair\nmass = 6000\n[gun 0]\nname = M2\nammo = 100\n".into(),
+            model_name: Some("f4u.glb".into()),
+            model: Some(vec![0, 1, 2, 3, 254, 255, 128]),
+        });
+        let text = doc.to_string();
+        let parsed = MapDoc::parse("m", &text);
+        assert_eq!(
+            parsed.planes, doc.planes,
+            "plane round-trip failed:\n{text}"
+        );
+        assert_eq!(parsed.planes[0].display_name(), "F4U-4 Corsair");
+    }
+
+    #[test]
+    fn plane_file_round_trips() {
+        let plane = EmbeddedPlane {
+            id: "test".into(),
+            config: "name = Test\nmass = 1000\n[gun 0]\nname = G\nammo = 5\n".into(),
+            model_name: Some("t.glb".into()),
+            model: Some(vec![9, 8, 7]),
+        };
+        let text = plane.to_file_string();
+        let parsed = EmbeddedPlane::parse_file(&text);
+        assert_eq!(parsed, plane, "plane file round-trip failed:\n{text}");
+    }
+
+    #[test]
+    fn plane_file_without_a_model_works() {
+        let plane = EmbeddedPlane::parse_file("name = Bare\nmass = 900\n");
+        assert_eq!(plane.id, "bare");
+        assert!(plane.model.is_none());
+        assert!(plane.config.contains("mass = 900"));
     }
 }

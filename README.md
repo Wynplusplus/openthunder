@@ -104,19 +104,36 @@ for `../openthunder_server` by default; override with `OPENTHUNDER_SERVER_DIR`.
 - **Spawn points**: *Add spawn* / *Switch team* / *Clear spawns*.
 - Toolbar: **New**, **Save**, **Reload**, and click the **map name** to rename.
 
-**Planes tab — click *Planes* in the toolbar:** lists the server's planes. **New
-plane…** opens a dialog (name + glTF/GLB model path); **Set model…**, **Rename**
-and **Delete** act on the selected plane. A plane with a `model` renders that
-mesh in-game instead of the procedural one.
+**Planes tab — click *Planes* in the toolbar:** manages the **mission's plane
+list**. The mission file carries each plane's full config *and* its glTF/GLB
+model, so the dedicated server needs no separate `planes/` setup — loading the
+mission just works.
+
+- **New plane…** — name it and optionally embed a `.glb`/`.gltf` file.
+- **Import .plane…** — load a standalone plane file into the list.
+- **Export .plane** — write the selected plane (config + model) to a single
+  self-contained `.plane` file.
+- **Set model…** — embed a model file (or leave it empty to clear it).
+- **Add built-ins** / **Rename** / **Delete**.
 
 **Camera:** hold the **right mouse button** to look, `WASD` to fly, `Q`/`E`
 down/up, `Shift` for a speed boost, and the mouse wheel to move forward/back.
 
 **Play / Stop test server** saves the map and runs the dedicated server with it.
 
-Maps are saved as the server's `maps/<id>.map` format (see the server README),
-and the server ships the whole file to clients, so a map's terrain, spawn points
-and objects appear in-game.
+### Mission & plane files
+
+A mission is the server's `maps/<id>.map` file, extended with `[plane <id>]`
+blocks. Each block holds the plane's whole `plane.conf` text plus, optionally,
+the model bytes (Base64) — so a mission is **self-contained**: drop the one file
+on a server and both the world and the planes work. The server ships the plane
+configs and models to every client on connect.
+
+A plane can also be saved on its own as a self-contained `.plane` file (config +
+model) and imported into another mission. Both formats are plain text.
+
+The server ships the whole map file to clients, so a map's terrain, spawn points,
+objects and planes appear in-game.
 
 ---
 
@@ -433,17 +450,19 @@ A plane is **data**. The built-in planes are defined in
 `openthunder::plane_config` (`src/plane_config.rs`), using the same `key = value`
 + `[gun N]` format the server uses.
 
-- **On a server**, a plane is just `planes/<id>/plane.conf`. The client downloads
-  every plane the server has when it connects, so **new server planes need no
-  client rebuild**. See the server repo's README.
+- **On a server**, a plane is a `[plane <id>]` block in the mission file (or a
+  `planes/<id>/plane.conf` directory). The client downloads every plane the
+  server has when it connects, so **new server planes need no client rebuild**.
+  See the server repo's README.
 - **Built-in / single-player**: edit `default_planes()` in `src/plane_config.rs`
   (and keep the server's matching `plane.conf` in sync). The launcher's list
   lives in `src/planes.rs`; a unit test keeps the two in sync.
 
 The visual model is generated from the plane's model parameters (length, wing
 chord, tail span, colour), so there is no per-plane rendering code to write. A
-`model = <path>` line instead loads a glTF/GLB from the client's `assets/`
-(the mission editor sets this).
+plane can instead carry a real glTF/GLB: the editor embeds the model bytes in the
+mission (Base64), the server ships them to clients, and each client writes them
+to `assets/models/` and loads the mesh.
 
 ## Project layout
 
@@ -454,7 +473,8 @@ src/
   keybinds.rs        keybind config: defaults, load/save, supported keys
   planes.rs          the list of aircraft offered by the launcher
   plane_config.rs    plane definitions (flight model + model + guns)
-  map_doc.rs         map documents (terrain, spawns, objects) — editor/server format
+  map_doc.rs         map/mission documents + embedded planes — editor/server format
+  base64.rs          dependency-free Base64 (embeds model bytes in text files)
   servers.rs         the server list shown by the launcher
   settings.rs        player settings (aircraft, server, display, name)
   protocol.rs        wire protocol (shared verbatim with the server repo)

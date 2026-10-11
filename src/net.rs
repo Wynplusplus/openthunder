@@ -307,7 +307,17 @@ fn receive_snapshots(
             Ok(ServerMessage::Planes { planes }) => {
                 let specs: Vec<AircraftSpec> = planes
                     .iter()
-                    .map(|(id, text)| AircraftSpec::from_config(&PlaneConfig::parse(id, text)))
+                    .map(|plane| {
+                        let mut config = PlaneConfig::parse(&plane.id, &plane.config);
+                        // A model embedded in the mission is written to the asset
+                        // directory so the glTF loader can find it.
+                        if let (Some(name), Some(data)) = (&plane.model_name, &plane.model_data) {
+                            if let Some(path) = install_model(&plane.id, name, data) {
+                                config.model = Some(path);
+                            }
+                        }
+                        AircraftSpec::from_config(&config)
+                    })
                     .collect();
                 info!(
                     "[net] loaded {} planes from server: {}",
@@ -473,4 +483,25 @@ fn arg_value(flag: &str) -> Option<String> {
     args.iter()
         .position(|arg| arg == flag)
         .and_then(|index| args.get(index + 1).cloned())
+}
+
+/// Write a plane model the server embedded in the mission into the client's
+/// asset directory, and return its asset path (or `None` if it could not be
+/// decoded/written).
+fn install_model(id: &str, name: &str, data: &str) -> Option<String> {
+    let bytes = openthunder::base64::decode(data)?;
+    let extension = std::path::Path::new(name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("glb")
+        .to_lowercase();
+    let file = format!("{id}.{extension}");
+    let dir = std::path::Path::new("assets").join("models");
+    std::fs::create_dir_all(&dir).ok()?;
+    std::fs::write(dir.join(&file), &bytes).ok()?;
+    info!(
+        "[net] installed plane model '{id}' -> models/{file} ({} bytes)",
+        bytes.len()
+    );
+    Some(format!("models/{file}"))
 }

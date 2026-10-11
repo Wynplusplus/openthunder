@@ -4,6 +4,7 @@
 //! server list, player settings and the wire protocol), so the launcher does not
 //! have to depend on Bevy.
 
+pub mod base64;
 pub mod keybinds;
 pub mod map_doc;
 pub mod plane_config;

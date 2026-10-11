@@ -12,10 +12,24 @@
 #![allow(dead_code)]
 
 /// Bump this whenever the message formats change.
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// Team index meaning "no team" (free flight and other unteamed modes).
 pub const NO_TEAM: u8 = 255;
+
+/// A plane shipped to clients: its `plane.conf` text plus, optionally, its model.
+///
+/// Embedding the model bytes (Base64) means a mission file can carry everything
+/// a client needs — see the game's `openthunder::map_doc`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlaneWire {
+    pub id: String,
+    pub config: String,
+    /// Model file name, e.g. `fighter.glb` (the format/extension).
+    pub model_name: Option<String>,
+    /// Base64-encoded glTF/GLB bytes.
+    pub model_data: Option<String>,
+}
 
 /// State of one aircraft, as broadcast in a snapshot.
 #[derive(Clone, Debug, PartialEq)]
@@ -71,9 +85,10 @@ pub enum ServerMessage {
         gamemode: String,
         team: u8,
     },
-    /// The planes the server has, as `(id, plane.conf text)` pairs. Sent right
-    /// after [`ServerMessage::Welcome`] so clients can load every plane in use.
-    Planes { planes: Vec<(String, String)> },
+    /// The planes the server has, as [`PlaneWire`]s (config + optional model).
+    /// Sent right after [`ServerMessage::Welcome`] so clients can load every
+    /// plane in use.
+    Planes { planes: Vec<PlaneWire> },
     /// The server's pilot crew configuration, as `crew.conf` text. Sent after
     /// [`ServerMessage::Planes`] so clients use this server's pilot model
     /// (g-tolerance, blackout/redout, stamina). An empty string means "keep the
@@ -235,7 +250,9 @@ impl ClientMessage {
     }
 
     pub fn parse(line: &str) -> Result<Self, ProtocolError> {
-        let fields: Vec<&str> = line.trim_end().split('\t').collect();
+        // Strip only the line ending — trailing tabs can be meaningful empty
+        // fields (e.g. a plane with no model).
+        let fields: Vec<&str> = line.trim_end_matches(['\n', '\r']).split('\t').collect();
         match fields.first().copied() {
             Some("JOIN") => {
                 if fields.len() != 4 {
@@ -297,11 +314,15 @@ impl ServerMessage {
             ),
             ServerMessage::Planes { planes } => {
                 let mut out = format!("PLANES\t{}", planes.len());
-                for (id, text) in planes {
+                for plane in planes {
                     out.push('\t');
-                    out.push_str(&sanitize_field(id));
+                    out.push_str(&sanitize_field(&plane.id));
                     out.push('\t');
-                    out.push_str(&escape_text(text));
+                    out.push_str(&escape_text(&plane.config));
+                    out.push('\t');
+                    out.push_str(plane.model_name.as_deref().unwrap_or(""));
+                    out.push('\t');
+                    out.push_str(plane.model_data.as_deref().unwrap_or(""));
                 }
                 out
             }
@@ -369,7 +390,9 @@ impl ServerMessage {
     }
 
     pub fn parse(line: &str) -> Result<Self, ProtocolError> {
-        let fields: Vec<&str> = line.trim_end().split('\t').collect();
+        // Strip only the line ending — trailing tabs can be meaningful empty
+        // fields (e.g. a plane with no model).
+        let fields: Vec<&str> = line.trim_end_matches(['\n', '\r']).split('\t').collect();
         match fields.first().copied() {
             Some("WELCOME") => {
                 if fields.len() != 5 {
@@ -392,11 +415,18 @@ impl ServerMessage {
                 let mut planes = Vec::with_capacity(count);
                 let mut index = 2;
                 for _ in 0..count {
-                    if fields.len() < index + 2 {
+                    if fields.len() < index + 4 {
                         return Err(ProtocolError("PLANES truncated".into()));
                     }
-                    planes.push((fields[index].to_string(), unescape_text(fields[index + 1])));
-                    index += 2;
+                    planes.push(PlaneWire {
+                        id: fields[index].to_string(),
+                        config: unescape_text(fields[index + 1]),
+                        model_name: (!fields[index + 2].is_empty())
+                            .then(|| fields[index + 2].to_string()),
+                        model_data: (!fields[index + 3].is_empty())
+                            .then(|| fields[index + 3].to_string()),
+                    });
+                    index += 4;
                 }
                 Ok(ServerMessage::Planes { planes })
             }
@@ -590,14 +620,18 @@ mod tests {
         });
         round_trip_server(ServerMessage::Planes {
             planes: vec![
-                (
-                    "f4u-4-corsair".into(),
-                    "name = F4U-4 Corsair\nmass = 6000\n".into(),
-                ),
-                (
-                    "bf-109-g6".into(),
-                    "name = Bf 109 G-6\n[gun 0]\nname = MG 151\n".into(),
-                ),
+                PlaneWire {
+                    id: "f4u-4-corsair".into(),
+                    config: "name = F4U-4 Corsair\nmass = 6000\n".into(),
+                    model_name: Some("f4u.glb".into()),
+                    model_data: Some("Zm9vYmFy".into()),
+                },
+                PlaneWire {
+                    id: "bf-109-g6".into(),
+                    config: "name = Bf 109 G-6\n[gun 0]\nname = MG 151\n".into(),
+                    model_name: None,
+                    model_data: None,
+                },
             ],
         });
         round_trip_server(ServerMessage::Error {
