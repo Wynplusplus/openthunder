@@ -32,7 +32,7 @@ use crate::aircraft::{
 use crate::camera::{ChaseCamera, FreeLook, ZoomState};
 use crate::damage::{AircraftPart, DamageModel};
 use crate::menu::GameMenu;
-use crate::world::{WorldKind, terrain_height};
+use crate::world::Ground;
 
 /// Extra zero-lift drag when the landing gear is fully extended.
 const GEAR_DRAG: f32 = 0.025;
@@ -631,7 +631,7 @@ fn reset_aircraft(
 /// Integrates the equations of motion for every player-controlled aircraft.
 fn flight_dynamics(
     time: Res<Time>,
-    world: Option<Res<WorldKind>>,
+    ground: Option<Res<Ground>>,
     mut query: Query<(&mut Transform, &mut Aircraft, &mut DamageModel), With<PlayerControlled>>,
 ) {
     // Clamp dt so a hitch can't blow up the simulation.
@@ -642,7 +642,6 @@ fn flight_dynamics(
     let Ok((mut transform, mut aircraft, mut damage)) = query.single_mut() else {
         return;
     };
-    let world_kind = world.map(|world| *world).unwrap_or_default();
 
     let spec = aircraft.spec.clone();
     let rotation = transform.rotation;
@@ -826,7 +825,10 @@ fn flight_dynamics(
     }
 
     // --- Ground: wheels, touchdown, rolling and take-off ---
-    let terrain = terrain_height(world_kind, transform.translation.x, transform.translation.z);
+    let terrain = ground
+        .as_deref()
+        .map(|ground| ground.height_at(transform.translation.x, transform.translation.z))
+        .unwrap_or(0.0);
     // The wheels hold the aircraft higher off the ground than the belly does.
     let rest_height = terrain + BELLY_HEIGHT + WHEEL_HEIGHT * gear;
     if transform.translation.y <= rest_height {

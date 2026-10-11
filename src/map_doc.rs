@@ -37,6 +37,8 @@
 
 use core::fmt::Write;
 
+use crate::terrain::Heightmap;
+
 /// A placed object's kind — a procedural primitive, or a custom glTF model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ObjectKind {
@@ -189,21 +191,46 @@ impl SpawnPoint {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Terrain {
     pub ground_color: [f32; 3],
-    /// Whether the world is mostly water (an ocean below the ground plane).
+    /// Colour of steep/high ground.
+    pub rock_color: [f32; 3],
+    /// Whether the world has water.
     pub water: bool,
     pub water_color: [f32; 3],
-    /// Half-size of the ground plane, in metres.
+    /// Height at which the water surface sits; terrain below it is underwater.
+    pub water_level: f32,
+    /// Full width of the terrain in metres (it spans `-size/2 .. size/2`).
     pub size: f32,
+    /// Optional sculpted heightmap (`None` = flat ground).
+    pub heightmap: Option<Heightmap>,
 }
 
 impl Default for Terrain {
     fn default() -> Self {
         Self {
             ground_color: [0.17, 0.27, 0.12],
+            rock_color: [0.45, 0.42, 0.38],
             water: false,
             water_color: [0.09, 0.28, 0.42],
+            water_level: 0.0,
             size: 30_000.0,
+            heightmap: None,
         }
+    }
+}
+
+impl Terrain {
+    /// Terrain height at a world position (flat ground when there is no
+    /// heightmap).
+    pub fn height_at(&self, x: f32, z: f32) -> f32 {
+        match &self.heightmap {
+            Some(map) => map.sample(x, z),
+            None => 0.0,
+        }
+    }
+
+    /// A fresh flat heightmap sized to this terrain, ready to sculpt.
+    pub fn make_heightmap(&mut self, resolution: usize, height: f32) {
+        self.heightmap = Some(Heightmap::flat(resolution, self.size, height));
     }
 }
 
@@ -327,6 +354,8 @@ struct ParseState {
     plane_config: String,
     plane_model_name: Option<String>,
     plane_model_data: Option<String>,
+    terrain_resolution: usize,
+    terrain_heights: Option<String>,
 }
 
 impl ParseState {
@@ -422,6 +451,8 @@ impl MapDoc {
             plane_config: String::new(),
             plane_model_name: None,
             plane_model_data: None,
+            terrain_resolution: 65,
+            terrain_heights: None,
         };
 
         for raw in text.lines() {
@@ -476,14 +507,23 @@ impl MapDoc {
                 },
                 Section::Terrain => match key {
                     "ground_color" => set_color(&mut state.doc.terrain.ground_color, value),
+                    "rock_color" => set_color(&mut state.doc.terrain.rock_color, value),
                     "water_color" => set_color(&mut state.doc.terrain.water_color, value),
                     "water" => {
                         state.doc.terrain.water =
                             parse_bool(value).unwrap_or(state.doc.terrain.water)
                     }
+                    "water_level" => {
+                        state.doc.terrain.water_level =
+                            parse_f32(value).unwrap_or(state.doc.terrain.water_level)
+                    }
                     "size" => {
                         state.doc.terrain.size = parse_f32(value).unwrap_or(state.doc.terrain.size)
                     }
+                    "resolution" => {
+                        state.terrain_resolution = value.parse().unwrap_or(state.terrain_resolution)
+                    }
+                    "heights" => state.terrain_heights = Some(value.to_string()),
                     _ => {}
                 },
                 Section::Spawn => match key {
@@ -534,6 +574,12 @@ impl MapDoc {
             }
         }
         state.flush();
+        // The heightmap is stored as one Base64 blob, decoded last so `size` and
+        // `resolution` are known regardless of line order.
+        if let Some(text) = state.terrain_heights.take() {
+            state.doc.terrain.heightmap =
+                Heightmap::from_base64(state.terrain_resolution, state.doc.terrain.size, &text);
+        }
         state.doc
     }
 
@@ -572,9 +618,15 @@ impl MapDoc {
                 "ground_color = {}",
                 fmt_color(self.terrain.ground_color)
             );
+            let _ = writeln!(out, "rock_color = {}", fmt_color(self.terrain.rock_color));
             let _ = writeln!(out, "water = {}", self.terrain.water);
             let _ = writeln!(out, "water_color = {}", fmt_color(self.terrain.water_color));
+            let _ = writeln!(out, "water_level = {}", self.terrain.water_level);
             let _ = writeln!(out, "size = {}", self.terrain.size);
+            if let Some(map) = &self.terrain.heightmap {
+                let _ = writeln!(out, "resolution = {}", map.resolution);
+                let _ = writeln!(out, "heights = {}", map.to_base64());
+            }
         }
 
         for spawn in &self.spawns {
@@ -747,5 +799,23 @@ mod tests {
         assert_eq!(plane.id, "bare");
         assert!(plane.model.is_none());
         assert!(plane.config.contains("mass = 900"));
+    }
+
+    #[test]
+    fn round_trips_a_sculpted_heightmap() {
+        let mut doc = MapDoc::new("terrain");
+        doc.terrain.make_heightmap(33, 0.0);
+        if let Some(map) = doc.terrain.heightmap.as_mut() {
+            map.sculpt(0.0, 0.0, 500.0, 300.0);
+        }
+        doc.terrain.water = true;
+        doc.terrain.water_level = 20.0;
+        let text = doc.to_string();
+        let parsed = MapDoc::parse("terrain", &text);
+        assert_eq!(parsed.terrain, doc.terrain);
+        assert!(
+            parsed.terrain.height_at(0.0, 0.0) > 200.0,
+            "the mountain should survive the round trip"
+        );
     }
 }

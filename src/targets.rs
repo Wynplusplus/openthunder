@@ -18,7 +18,7 @@ use crate::camera::ChaseCamera;
 use crate::damage::{AircraftPart, DamageModel};
 use crate::match_client::MatchClient;
 use crate::spotting::Spotting;
-use crate::world::WorldKind;
+use crate::world::{Ground, WorldKind};
 
 /// Seconds before a destroyed target comes back.
 const RESPAWN_SECS: f32 = 20.0;
@@ -142,7 +142,7 @@ impl Plugin for TargetsPlugin {
 /// Build the targets for free flight, or clear them for team modes.
 fn sync_targets(
     mut commands: Commands,
-    world: Res<WorldKind>,
+    ground: Res<Ground>,
     match_state: Res<MatchClient>,
     mut built: ResMut<TargetsBuilt>,
     mut score: ResMut<TargetScore>,
@@ -154,7 +154,7 @@ fn sync_targets(
     let wanted = if match_state.is_team_mode() {
         None
     } else {
-        Some(*world)
+        Some(ground.kind)
     };
     if built.for_world == wanted {
         return;
@@ -166,11 +166,11 @@ fn sync_targets(
     score.destroyed = 0;
     built.for_world = wanted;
     score.total = match wanted {
-        Some(kind) => {
-            let ground = kind.ground_level();
+        Some(_) => {
+            let ground_level = ground.ground_level();
             let mut total =
-                spawn_ground_targets(&mut commands, &mut meshes, &mut materials, ground);
-            total += spawn_plane_targets(&mut commands, &mut meshes, &mut materials, ground);
+                spawn_ground_targets(&mut commands, &mut meshes, &mut materials, ground_level);
+            total += spawn_plane_targets(&mut commands, &mut meshes, &mut materials, ground_level);
             total
         }
         None => 0,
@@ -351,14 +351,14 @@ fn update_target_planes(
 /// Tumble a destroyed target plane down to the ground.
 fn update_falling(
     time: Res<Time>,
-    world: Res<WorldKind>,
+    ground: Res<Ground>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut falling: Query<(Entity, &mut Transform, &mut Falling, &mut Visibility)>,
 ) {
     let dt = time.delta_secs();
-    let ground = world.ground_level() + 1.0;
+    let ground = ground.ground_level() + 1.0;
     for (entity, mut transform, mut fall, mut visibility) in &mut falling {
         fall.velocity += Vec3::NEG_Y * 9.81 * dt;
         transform.translation += fall.velocity * dt;
@@ -578,7 +578,7 @@ mod tests {
         app.init_resource::<TargetScore>()
             .init_resource::<TargetsBuilt>()
             .init_resource::<MatchClient>()
-            .init_resource::<WorldKind>()
+            .init_resource::<Ground>()
             .add_systems(Update, (sync_targets, update_target_planes));
         app
     }

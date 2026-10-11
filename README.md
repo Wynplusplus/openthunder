@@ -102,6 +102,12 @@ for `../openthunder_server` by default; override with `OPENTHUNDER_SERVER_DIR`.
   position X/Y/Z, yaw, scale X/Y/Z and colour R/G/B. **Kind** cycles the type;
   **Delete** removes it.
 - **Spawn points**: *Add spawn* / *Switch team* / *Clear spawns*.
+- **Terrain** (left dock): a **heightmap** system. *Add heightmap* starts one,
+  then pick a brush — **Raise**, **Lower**, **Smooth**, **Flatten** or
+  **Mountain** — and drag in the viewport to sculpt mountains and valleys. The
+  **radius** and **strength** steppers tune the brush, and **Water** + the
+  **water-level** stepper flood everything below the level. *Remove heightmap*
+  goes back to flat ground.
 - Toolbar: **New**, **Save**, **Reload**, and click the **map name** to rename.
 
 **Planes tab — click *Planes* in the toolbar:** manages the **mission's plane
@@ -131,6 +137,12 @@ configs and models to every client on connect.
 
 A plane can also be saved on its own as a self-contained `.plane` file (config +
 model) and imported into another mission. Both formats are plain text.
+
+The `[terrain]` section carries the **heightmap**: `size`, `resolution`,
+`water_level`, colours, and `heights = <Base64 little-endian f32 grid>`. The
+client builds a vertex-coloured mesh from it and samples the same grid for the
+ground/landing model, so mountains and sea floors line up exactly. A map with no
+`heights` is flat ground.
 
 The server ships the whole map file to clients, so a map's terrain, spawn points,
 objects and planes appear in-game.
@@ -474,6 +486,7 @@ src/
   planes.rs          the list of aircraft offered by the launcher
   plane_config.rs    plane definitions (flight model + model + guns)
   map_doc.rs         map/mission documents + embedded planes — editor/server format
+  terrain.rs         heightmap terrain (sculpting, sampling, Base64 storage)
   base64.rs          dependency-free Base64 (embeds model bytes in text files)
   servers.rs         the server list shown by the launcher
   settings.rs        player settings (aircraft, server, display, name)

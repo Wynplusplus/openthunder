@@ -101,7 +101,7 @@ fn spawn_menu_input(
     keys: Res<ButtonInput<KeyCode>>,
     registry: Res<AircraftRegistry>,
     client: Res<NetClient>,
-    world: Res<crate::world::WorldKind>,
+    world: Res<crate::world::Ground>,
     mut state: ResMut<SpawnState>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -136,7 +136,7 @@ fn spawn_menu_input(
     // Start on the runway, ready to take off.
     let mut transform = Transform::IDENTITY;
     let mut damage = DamageModel::new(spec.max_health);
-    let ground = crate::world::terrain_height(*world, 0.0, 0.0);
+    let ground = world.ground_level();
     crate::flight::respawn_on_runway(&mut transform, &mut aircraft, &mut damage, ground);
     let entity = spawn_aircraft(
         &mut commands,

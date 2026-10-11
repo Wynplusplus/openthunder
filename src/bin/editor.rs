@@ -138,6 +138,36 @@ enum Prop {
     ColorB,
 }
 
+/// A terrain sculpting brush.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TerrainTool {
+    Raise,
+    Lower,
+    Smooth,
+    Flatten,
+    Mountain,
+}
+
+impl TerrainTool {
+    const ALL: [TerrainTool; 5] = [
+        TerrainTool::Raise,
+        TerrainTool::Lower,
+        TerrainTool::Smooth,
+        TerrainTool::Flatten,
+        TerrainTool::Mountain,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            TerrainTool::Raise => "Raise",
+            TerrainTool::Lower => "Lower",
+            TerrainTool::Smooth => "Smooth",
+            TerrainTool::Flatten => "Flatten",
+            TerrainTool::Mountain => "Mountain",
+        }
+    }
+}
+
 #[derive(Resource)]
 struct Editor {
     doc: MapDoc,
@@ -157,6 +187,10 @@ struct Editor {
     input: TextInput,
     look: Vec2,
     speed: f32,
+    /// The active terrain brush (`None` = place objects instead).
+    terrain_tool: Option<TerrainTool>,
+    brush_radius: f32,
+    brush_strength: f32,
 }
 
 impl Editor {
@@ -178,6 +212,9 @@ impl Editor {
             input: TextInput::default(),
             look: Vec2::new(0.0, -0.35),
             speed: 160.0,
+            terrain_tool: None,
+            brush_radius: 400.0,
+            brush_strength: 40.0,
         }
     }
 
@@ -211,6 +248,8 @@ impl Editor {
 struct EditorCamera;
 
 /// Container nodes whose children are rebuilt from state.
+#[derive(Component)]
+struct TerrainList;
 #[derive(Component)]
 struct PaletteList;
 #[derive(Component)]
@@ -261,6 +300,13 @@ enum Action {
     AddSpawn,
     SwitchTeam,
     ClearSpawns,
+    SetTerrainTool(Option<TerrainTool>),
+    AddHeightmap,
+    RemoveHeightmap,
+    BrushRadius(f32),
+    BrushStrength(f32),
+    ToggleWater,
+    WaterLevel(f32),
     SelectPlane(usize),
     OpenDialog(DialogKind),
     RenamePlane,
@@ -583,6 +629,18 @@ fn spawn_ui(mut commands: Commands) {
                     BorderColor::all(BORDER),
                 ))
                 .with_children(|dock| {
+                    dock.spawn(text("Terrain", 13.0, DIM));
+                    dock.spawn((
+                        Node {
+                            flex_direction: FlexDirection::Row,
+                            flex_wrap: FlexWrap::Wrap,
+                            column_gap: px(4),
+                            row_gap: px(4),
+                            ..default()
+                        },
+                        TerrainList,
+                    ));
+                    spacer_h(dock, 6.0);
                     dock.spawn(text("Add object", 13.0, DIM));
                     dock.spawn((
                         Node {
@@ -880,6 +938,44 @@ fn apply_action(editor: &mut Editor, action: Action) {
             editor.dirty = true;
             editor.ui_dirty = true;
         }
+        Action::SetTerrainTool(tool) => {
+            editor.terrain_tool = tool;
+            editor.status = match tool {
+                Some(tool) => format!("{} brush: drag in the viewport.", tool.label()),
+                None => "Object placement.".to_string(),
+            };
+            editor.ui_dirty = true;
+        }
+        Action::AddHeightmap => {
+            editor.doc.terrain.make_heightmap(65, 0.0);
+            editor.dirty = true;
+            editor.ui_dirty = true;
+            editor.status = "Added a flat heightmap — sculpt mountains with a brush.".to_string();
+        }
+        Action::RemoveHeightmap => {
+            editor.doc.terrain.heightmap = None;
+            editor.dirty = true;
+            editor.ui_dirty = true;
+            editor.status = "Removed the heightmap (flat ground).".to_string();
+        }
+        Action::BrushRadius(delta) => {
+            editor.brush_radius = (editor.brush_radius + delta).clamp(50.0, 4000.0);
+            editor.ui_dirty = true;
+        }
+        Action::BrushStrength(delta) => {
+            editor.brush_strength = (editor.brush_strength + delta).clamp(2.0, 500.0);
+            editor.ui_dirty = true;
+        }
+        Action::ToggleWater => {
+            editor.doc.terrain.water = !editor.doc.terrain.water;
+            editor.dirty = true;
+            editor.ui_dirty = true;
+        }
+        Action::WaterLevel(delta) => {
+            editor.doc.terrain.water_level += delta;
+            editor.dirty = true;
+            editor.ui_dirty = true;
+        }
         Action::SelectPlane(index) => {
             editor.plane_selected = index;
             editor.ui_dirty = true;
@@ -1021,6 +1117,7 @@ fn rebuild_ui(
     mut commands: Commands,
     mut editor: ResMut<Editor>,
     palette: Query<Entity, With<PaletteList>>,
+    terrain: Query<Entity, With<TerrainList>>,
     scene: Query<Entity, With<SceneList>>,
     inspector: Query<Entity, With<InspectorList>>,
     planes: Query<Entity, With<PlanesList>>,
@@ -1039,6 +1136,66 @@ fn rebuild_ui(
         } else {
             Display::None
         };
+    }
+
+    if let Ok(entity) = terrain.single() {
+        commands.entity(entity).despawn_related::<Children>();
+        commands.entity(entity).with_children(|parent| {
+            for tool in TerrainTool::ALL {
+                button(
+                    parent,
+                    tool.label(),
+                    Action::SetTerrainTool(Some(tool)),
+                    editor.terrain_tool == Some(tool),
+                );
+            }
+            button(
+                parent,
+                "Place objects",
+                Action::SetTerrainTool(None),
+                editor.terrain_tool.is_none(),
+            );
+            let has_map = editor.doc.terrain.heightmap.is_some();
+            if has_map {
+                button(parent, "Remove heightmap", Action::RemoveHeightmap, false);
+            } else {
+                button(parent, "Add heightmap", Action::AddHeightmap, false);
+            }
+            row(parent, |row| {
+                row.spawn(text(
+                    format!("Radius {:.0} m", editor.brush_radius),
+                    11.0,
+                    DIM,
+                ));
+                button(row, "−", Action::BrushRadius(-100.0), false);
+                button(row, "+", Action::BrushRadius(100.0), false);
+            });
+            row(parent, |row| {
+                row.spawn(text(
+                    format!("Strength {:.0}", editor.brush_strength),
+                    11.0,
+                    DIM,
+                ));
+                button(row, "−", Action::BrushStrength(-10.0), false);
+                button(row, "+", Action::BrushStrength(10.0), false);
+            });
+            row(parent, |row| {
+                let water = editor.doc.terrain.water;
+                button(
+                    row,
+                    if water { "Water: on" } else { "Water: off" },
+                    Action::ToggleWater,
+                    water,
+                );
+                button(row, "−", Action::WaterLevel(-5.0), false);
+                row.spawn(text(
+                    format!("{:.0} m", editor.doc.terrain.water_level),
+                    11.0,
+                    DIM,
+                ));
+                button(row, "+", Action::WaterLevel(5.0), false);
+            });
+        });
     }
 
     if let Ok(entity) = palette.single() {
@@ -1447,15 +1604,24 @@ fn viewport_input(
         return;
     };
 
-    if mouse.just_pressed(MouseButton::Left) && editor.mode == Mode::Map {
-        if let Some(point) = ground_hit(ray) {
-            let mut object = MapObject::new(editor.place, point);
-            object.position[1] = object.scale[1] * 0.5;
-            editor.doc.objects.push(object);
-            editor.selected = Some(editor.doc.objects.len() - 1);
-            editor.dirty = true;
-            editor.ui_dirty = true;
-            editor.status = format!("Placed {}.", editor.place.label());
+    if editor.mode == Mode::Map {
+        if let Some(tool) = editor.terrain_tool {
+            // Sculpting: apply the brush while the left button is held.
+            if mouse.pressed(MouseButton::Left) {
+                if let Some(point) = ground_hit(ray) {
+                    sculpt(&mut editor, tool, point[0], point[2]);
+                }
+            }
+        } else if mouse.just_pressed(MouseButton::Left) {
+            if let Some(point) = ground_hit(ray) {
+                let mut object = MapObject::new(editor.place, point);
+                object.position[1] = object.scale[1] * 0.5;
+                editor.doc.objects.push(object);
+                editor.selected = Some(editor.doc.objects.len() - 1);
+                editor.dirty = true;
+                editor.ui_dirty = true;
+                editor.status = format!("Placed {}.", editor.place.label());
+            }
         }
     }
     if mouse.just_pressed(MouseButton::Middle) && editor.mode == Mode::Map {
@@ -1466,6 +1632,27 @@ fn viewport_input(
             None => "No object under the cursor.".to_string(),
         };
     }
+}
+
+/// Apply a terrain brush at a world position.
+fn sculpt(editor: &mut Editor, tool: TerrainTool, x: f32, z: f32) {
+    let radius = editor.brush_radius;
+    let strength = editor.brush_strength;
+    let Some(map) = editor.doc.terrain.heightmap.as_mut() else {
+        editor.status = "Add a heightmap first (Terrain → Add heightmap).".to_string();
+        return;
+    };
+    match tool {
+        TerrainTool::Raise => map.sculpt(x, z, radius, strength),
+        TerrainTool::Lower => map.sculpt(x, z, radius, -strength),
+        TerrainTool::Smooth => map.smooth(x, z, radius, 0.6),
+        TerrainTool::Flatten => {
+            let target = map.sample(x, z);
+            map.flatten(x, z, radius, target, 0.6);
+        }
+        TerrainTool::Mountain => map.sculpt(x, z, radius * 0.6, strength * 3.0),
+    }
+    editor.dirty = true;
 }
 
 /// Whether a point is inside the central viewport rectangle.
@@ -1591,6 +1778,62 @@ fn apply_text(editor: &mut Editor, field: Focus, value: String) {
 // Preview, status, test server
 // ---------------------------------------------------------------------------
 
+/// Build a vertex-coloured mesh from a heightmap — the editor previews the same
+/// mesh the game renders.
+fn heightmap_mesh(
+    map: &openthunder::terrain::Heightmap,
+    ground_color: [f32; 3],
+    rock_color: [f32; 3],
+) -> Mesh {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::color::LinearRgba;
+    use bevy::mesh::{Indices, PrimitiveTopology};
+
+    let n = map.resolution;
+    let cell = map.cell();
+    let half = map.size * 0.5;
+    let ground = Color::srgb(ground_color[0], ground_color[1], ground_color[2]);
+    let rock = Color::srgb(rock_color[0], rock_color[1], rock_color[2]);
+
+    let mut positions = Vec::with_capacity(n * n);
+    let mut normals = Vec::with_capacity(n * n);
+    let mut colors = Vec::with_capacity(n * n);
+    for iz in 0..n {
+        for ix in 0..n {
+            let x = -half + ix as f32 * cell;
+            let z = -half + iz as f32 * cell;
+            positions.push([x, map.height(ix, iz), z]);
+            let left = map.height(ix.saturating_sub(1), iz);
+            let right = map.height((ix + 1).min(n - 1), iz);
+            let down = map.height(ix, iz.saturating_sub(1));
+            let up = map.height(ix, (iz + 1).min(n - 1));
+            let normal = Vec3::new(left - right, 2.0 * cell, down - up).normalize_or_zero();
+            normals.push(normal.to_array());
+            let slope = ((1.0 - normal.y.clamp(0.0, 1.0)) * 3.0).clamp(0.0, 1.0);
+            let linear = LinearRgba::from(ground.mix(&rock, slope));
+            colors.push([linear.red, linear.green, linear.blue, 1.0]);
+        }
+    }
+    let mut indices = Vec::with_capacity((n - 1) * (n - 1) * 6);
+    for iz in 0..n - 1 {
+        for ix in 0..n - 1 {
+            let a = (iz * n + ix) as u32;
+            let b = a + 1;
+            let c = a + n as u32;
+            let d = c + 1;
+            indices.extend_from_slice(&[a, c, b, b, c, d]);
+        }
+    }
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
+    .with_inserted_indices(Indices::U32(indices))
+}
+
 fn rebuild_preview(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -1604,6 +1847,67 @@ fn rebuild_preview(
     editor.dirty = false;
     for entity in &existing {
         commands.entity(entity).despawn();
+    }
+
+    // --- Terrain ---
+    let terrain = &editor.doc.terrain;
+    match &terrain.heightmap {
+        Some(map) => {
+            let material = materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                perceptual_roughness: 1.0,
+                ..default()
+            });
+            commands.spawn((
+                Mesh3d(meshes.add(heightmap_mesh(
+                    map,
+                    terrain.ground_color,
+                    terrain.rock_color,
+                ))),
+                MeshMaterial3d(material),
+                Preview,
+            ));
+        }
+        None => {
+            let material = materials.add(StandardMaterial {
+                base_color: Color::srgb(
+                    terrain.ground_color[0],
+                    terrain.ground_color[1],
+                    terrain.ground_color[2],
+                ),
+                perceptual_roughness: 1.0,
+                ..default()
+            });
+            commands.spawn((
+                Mesh3d(meshes.add(Plane3d::default().mesh().size(terrain.size, terrain.size))),
+                MeshMaterial3d(material),
+                Preview,
+            ));
+        }
+    }
+    if terrain.water {
+        let material = materials.add(StandardMaterial {
+            base_color: Color::srgb(
+                terrain.water_color[0],
+                terrain.water_color[1],
+                terrain.water_color[2],
+            ),
+            perceptual_roughness: 0.35,
+            metallic: 0.1,
+            ..default()
+        });
+        commands.spawn((
+            Mesh3d(
+                meshes.add(
+                    Plane3d::default()
+                        .mesh()
+                        .size(terrain.size * 3.0, terrain.size * 3.0),
+                ),
+            ),
+            MeshMaterial3d(material),
+            Transform::from_xyz(0.0, terrain.water_level, 0.0),
+            Preview,
+        ));
     }
 
     for object in &editor.doc.objects {

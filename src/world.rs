@@ -19,6 +19,7 @@ impl Plugin for WorldPlugin {
         app.init_resource::<WorldKind>()
             .init_resource::<MapSource>()
             .init_resource::<BuiltWorld>()
+            .init_resource::<Ground>()
             .add_systems(Startup, setup_world)
             .add_systems(Update, switch_world);
     }
@@ -86,6 +87,33 @@ pub(crate) fn terrain_height(kind: WorldKind, x: f32, z: f32) -> f32 {
     }
 }
 
+/// The terrain currently in use, for the ground/landing model. Mirrors what was
+/// last built so the flight model samples the same heights as the mesh.
+#[derive(Resource, Default)]
+pub struct Ground {
+    pub kind: WorldKind,
+    pub terrain: openthunder::map_doc::Terrain,
+}
+
+impl Ground {
+    /// Terrain height at a world position.
+    pub fn height_at(&self, x: f32, z: f32) -> f32 {
+        if self.terrain.heightmap.is_some() {
+            self.terrain.height_at(x, z)
+        } else {
+            terrain_height(self.kind, x, z)
+        }
+    }
+
+    /// Height where the runway / ground targets sit.
+    pub fn ground_level(&self) -> f32 {
+        match &self.terrain.heightmap {
+            Some(map) => map.sample(0.0, 0.0),
+            None => self.kind.ground_level(),
+        }
+    }
+}
+
 /// Marks everything the world builder spawned, so it can be rebuilt.
 #[derive(Component)]
 struct WorldEntity;
@@ -120,6 +148,7 @@ fn switch_world(
     client: Res<NetClient>,
     source: Res<MapSource>,
     mut built: ResMut<BuiltWorld>,
+    mut ground: ResMut<Ground>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     existing: Query<Entity, With<WorldEntity>>,
@@ -141,10 +170,13 @@ fn switch_world(
     }
     built.source = text.clone();
     built.kind = kind;
+    ground.kind = kind;
     if text.trim().is_empty() {
+        ground.terrain = openthunder::map_doc::Terrain::default();
         build_world(&mut commands, &mut meshes, &mut materials, kind);
     } else {
         let doc = MapDoc::parse(&name, &text);
+        ground.terrain = doc.terrain.clone();
         build_map(&mut commands, &mut meshes, &mut materials, &doc);
     }
 }
@@ -354,29 +386,52 @@ fn build_map(
     materials: &mut Assets<StandardMaterial>,
     doc: &MapDoc,
 ) {
-    let size = doc.terrain.size.max(1_000.0);
-    let ground = materials.add(StandardMaterial {
-        base_color: srgb(doc.terrain.ground_color),
-        perceptual_roughness: 1.0,
-        ..default()
-    });
-    commands.spawn((
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(size * 2.0, size * 2.0))),
-        MeshMaterial3d(ground),
-        WorldEntity,
-    ));
+    let terrain = &doc.terrain;
+    let size = terrain.size.max(1_000.0);
 
-    if doc.terrain.water {
+    // Ground: a sculpted, vertex-coloured heightmap mesh, or a flat plane.
+    match &terrain.heightmap {
+        Some(map) => {
+            let material = materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                perceptual_roughness: 1.0,
+                ..default()
+            });
+            commands.spawn((
+                Mesh3d(meshes.add(heightmap_mesh(
+                    map,
+                    terrain.ground_color,
+                    terrain.rock_color,
+                ))),
+                MeshMaterial3d(material),
+                WorldEntity,
+            ));
+        }
+        None => {
+            let material = materials.add(StandardMaterial {
+                base_color: srgb(terrain.ground_color),
+                perceptual_roughness: 1.0,
+                ..default()
+            });
+            commands.spawn((
+                Mesh3d(meshes.add(Plane3d::default().mesh().size(size, size))),
+                MeshMaterial3d(material),
+                WorldEntity,
+            ));
+        }
+    }
+
+    if terrain.water {
         let water = materials.add(StandardMaterial {
-            base_color: srgb(doc.terrain.water_color),
-            perceptual_roughness: 0.4,
+            base_color: srgb(terrain.water_color),
+            perceptual_roughness: 0.35,
             metallic: 0.1,
             ..default()
         });
         commands.spawn((
             Mesh3d(meshes.add(Plane3d::default().mesh().size(size * 3.0, size * 3.0))),
             MeshMaterial3d(water),
-            Transform::from_xyz(0.0, -1.0, 0.0),
+            Transform::from_xyz(0.0, terrain.water_level, 0.0),
             WorldEntity,
         ));
     }
@@ -384,6 +439,69 @@ fn build_map(
     for object in &doc.objects {
         spawn_object(commands, meshes, materials, object);
     }
+}
+
+/// Build a vertex-coloured triangle mesh from a heightmap. Steep faces are
+/// tinted toward the rock colour; flat ground keeps the ground colour.
+fn heightmap_mesh(
+    map: &openthunder::terrain::Heightmap,
+    ground_color: [f32; 3],
+    rock_color: [f32; 3],
+) -> Mesh {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::color::LinearRgba;
+    use bevy::mesh::{Indices, PrimitiveTopology};
+
+    let n = map.resolution;
+    let cell = map.cell();
+    let half = map.size * 0.5;
+    let ground = Color::srgb(ground_color[0], ground_color[1], ground_color[2]);
+    let rock = Color::srgb(rock_color[0], rock_color[1], rock_color[2]);
+
+    let mut positions = Vec::with_capacity(n * n);
+    let mut normals = Vec::with_capacity(n * n);
+    let mut colors = Vec::with_capacity(n * n);
+
+    for iz in 0..n {
+        for ix in 0..n {
+            let x = -half + ix as f32 * cell;
+            let z = -half + iz as f32 * cell;
+            positions.push([x, map.height(ix, iz), z]);
+
+            // Central-difference normal.
+            let left = map.height(ix.saturating_sub(1), iz);
+            let right = map.height((ix + 1).min(n - 1), iz);
+            let down = map.height(ix, iz.saturating_sub(1));
+            let up = map.height(ix, (iz + 1).min(n - 1));
+            let normal = Vec3::new(left - right, 2.0 * cell, down - up).normalize_or_zero();
+            normals.push(normal.to_array());
+
+            let slope = (1.0 - normal.y.clamp(0.0, 1.0)) * 3.0;
+            let tinted = ground.mix(&rock, slope.clamp(0.0, 1.0));
+            let linear = LinearRgba::from(tinted);
+            colors.push([linear.red, linear.green, linear.blue, 1.0]);
+        }
+    }
+
+    let mut indices = Vec::with_capacity((n - 1) * (n - 1) * 6);
+    for iz in 0..n - 1 {
+        for ix in 0..n - 1 {
+            let a = (iz * n + ix) as u32;
+            let b = a + 1;
+            let c = a + n as u32;
+            let d = c + 1;
+            indices.extend_from_slice(&[a, c, b, b, c, d]);
+        }
+    }
+
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
+    .with_inserted_indices(Indices::U32(indices))
 }
 
 /// Spawn one placed object. Primitives are unit meshes scaled by the object;
