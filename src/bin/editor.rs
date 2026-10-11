@@ -1,53 +1,78 @@
 //! OpenThunder mission editor.
 //!
-//! A small Bevy 3D application for building the maps/missions the dedicated
-//! server hosts, creating planes (including importing glTF/GLB models), and
-//! launching a local test server. Reachable from the TUI launcher.
+//! A mouse-driven, Godot-style 3D editor for building the maps/missions the
+//! dedicated server hosts, creating planes (with glTF/GLB models), and launching
+//! a local test server. Reachable from the TUI launcher.
 //!
 //! Run it with `cargo run --bin editor`.
 //!
 //! It reads and writes the **server's** `maps/` and `planes/` directories. By
 //! default it looks for `../openthunder_server`; override with the
 //! `OPENTHUNDER_SERVER_DIR` environment variable.
+//!
+//! ## Layout
+//!
+//! ```text
+//! +---------------------------------------------------------------+
+//! | toolbar: File  Map/Planes  Play      |          map name        |
+//! +-----------+---------------------------------------+-----------+
+//! | palette   |                                       | inspector |
+//! | scene tree|            3D viewport                |           |
+//! +-----------+---------------------------------------+-----------+
+//! | status bar                                                     |
+//! +---------------------------------------------------------------+
+//! ```
+//!
+//! The left/right docks and the bottom bar are fixed sizes, so the viewport is a
+//! known rectangle — clicks inside it place/select; clicks on the docks hit the
+//! UI buttons.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 
 use bevy::input::keyboard::KeyboardInput;
-use bevy::input::mouse::AccumulatedMouseMotion;
+use bevy::input::mouse::{AccumulatedMouseMotion, MouseWheel};
 use bevy::prelude::*;
-use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
+use bevy::window::PrimaryWindow;
 
 use openthunder::map_doc::{MapDoc, MapObject, ObjectKind, SpawnPoint};
 use openthunder::plane_config::PlaneConfig;
+
+// Dock sizes (logical pixels) — the viewport is everything inside them.
+const TOP_H: f32 = 40.0;
+const LEFT_W: f32 = 250.0;
+const RIGHT_W: f32 = 320.0;
+const BOTTOM_H: f32 = 26.0;
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "OpenThunder — Mission Editor".to_string(),
-                resolution: (1440, 900).into(),
+                resolution: (1500, 940).into(),
                 ..default()
             }),
             ..default()
         }))
-        .insert_resource(ClearColor(Color::srgb(0.42, 0.58, 0.8)))
+        .insert_resource(ClearColor(Color::srgb(0.30, 0.45, 0.68)))
         .insert_resource(GlobalAmbientLight {
-            color: Color::srgb(0.7, 0.78, 0.95),
-            brightness: 600.0,
+            color: Color::srgb(0.72, 0.78, 0.95),
+            brightness: 650.0,
             ..default()
         })
         .insert_resource(Editor::new())
-        .add_systems(Startup, setup)
+        .add_systems(Startup, (setup_scene, spawn_ui).chain())
         .add_systems(
             Update,
             (
+                button_visuals,
+                handle_buttons,
+                rebuild_ui.after(handle_buttons),
                 camera_control,
+                viewport_input.after(handle_buttons),
                 text_input,
-                editor_input,
                 rebuild_preview,
-                update_hud,
-                manage_cursor,
+                update_status,
                 poll_server,
             ),
         )
@@ -64,20 +89,48 @@ enum Mode {
     Planes,
 }
 
-/// A text field being typed into.
+/// A text field the keyboard is currently typing into.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Field {
-    NewMap,
-    Rename,
-    NewPlane,
+enum Focus {
+    MapName,
     PlaneName,
-    Model,
+    DialogName,
+    DialogModel,
 }
 
 #[derive(Default)]
 struct TextInput {
-    field: Option<Field>,
+    field: Option<Focus>,
     buffer: String,
+}
+
+/// The modal "new plane" / "set model" dialog.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DialogKind {
+    NewPlane,
+    SetModel,
+}
+
+struct Dialog {
+    kind: DialogKind,
+    name: String,
+    model: String,
+    focus: Focus,
+}
+
+/// The property rows the inspector can nudge.
+#[derive(Clone, Copy)]
+enum Prop {
+    PosX,
+    PosY,
+    PosZ,
+    Yaw,
+    ScaleX,
+    ScaleY,
+    ScaleZ,
+    ColorR,
+    ColorG,
+    ColorB,
 }
 
 #[derive(Resource)]
@@ -86,37 +139,42 @@ struct Editor {
     selected: Option<usize>,
     place: ObjectKind,
     spawn_team: u8,
-    /// Set when the document changed and the 3D preview must be rebuilt.
     dirty: bool,
+    /// Set when a UI panel must be rebuilt.
+    ui_dirty: bool,
     status: String,
     server_dir: PathBuf,
     server: Option<Child>,
     mode: Mode,
     planes: Vec<PlaneConfig>,
     plane_selected: usize,
+    dialog: Option<Dialog>,
     input: TextInput,
     look: Vec2,
+    speed: f32,
 }
 
 impl Editor {
     fn new() -> Self {
         let server_dir = server_dir();
-        let doc = MapDoc::new("untitled");
         let planes = load_planes(&server_dir);
         Self {
-            doc,
+            doc: MapDoc::new("untitled"),
             selected: None,
             place: ObjectKind::Building,
             spawn_team: 0,
             dirty: true,
+            ui_dirty: true,
             status: format!("Server directory: {}", server_dir.display()),
             server_dir,
             server: None,
             mode: Mode::Map,
             planes,
             plane_selected: 0,
+            dialog: None,
             input: TextInput::default(),
-            look: Vec2::new(0.0, -0.3),
+            look: Vec2::new(0.0, -0.35),
+            speed: 160.0,
         }
     }
 
@@ -128,27 +186,92 @@ impl Editor {
         self.server_dir.join("planes")
     }
 
-    /// The path this document saves to.
     fn map_path(&self) -> PathBuf {
         self.maps_dir().join(format!("{}.map", self.doc.id))
     }
+
+    fn selected_object(&self) -> Option<&MapObject> {
+        self.selected.and_then(|index| self.doc.objects.get(index))
+    }
+
+    fn selected_object_mut(&mut self) -> Option<&mut MapObject> {
+        let index = self.selected?;
+        self.doc.objects.get_mut(index)
+    }
 }
+
+// ---------------------------------------------------------------------------
+// UI markers & actions
+// ---------------------------------------------------------------------------
 
 #[derive(Component)]
 struct EditorCamera;
 
+/// Container nodes whose children are rebuilt from state.
 #[derive(Component)]
-struct EditorHud;
+struct PaletteList;
+#[derive(Component)]
+struct SceneList;
+#[derive(Component)]
+struct InspectorList;
+#[derive(Component)]
+struct PlanesList;
 
-/// Preview geometry rebuilt from the document.
+/// The centre panel shown in Planes mode.
 #[derive(Component)]
-struct Preview;
+struct PlanesPanel;
+
+#[derive(Component)]
+struct ToolbarTitle;
+#[derive(Component)]
+struct StatusText;
+#[derive(Component)]
+struct DialogRoot;
+#[derive(Component)]
+struct DialogBody;
+
+/// A clickable UI element and what it does.
+#[derive(Component, Clone)]
+struct ActionBtn(Action);
+
+/// The base/active colours of a button, for hover/press feedback.
+#[derive(Component)]
+struct BtnColors {
+    base: Color,
+    active: Color,
+    is_active: bool,
+}
+
+#[derive(Clone)]
+enum Action {
+    NewMap,
+    SaveMap,
+    ReloadMap,
+    SetMode(Mode),
+    ToggleServer,
+    FocusMapName,
+    PickKind(ObjectKind),
+    SelectObject(usize),
+    DeleteObject,
+    CycleKind,
+    Nudge(Prop, f32),
+    AddSpawn,
+    SwitchTeam,
+    ClearSpawns,
+    SelectPlane(usize),
+    OpenDialog(DialogKind),
+    RenamePlane,
+    DeletePlane,
+    FocusDialog(Focus),
+    DialogConfirm,
+    DialogCancel,
+    Quit,
+}
 
 // ---------------------------------------------------------------------------
 // Paths & files
 // ---------------------------------------------------------------------------
 
-/// Locate the dedicated-server repository (where `maps/` and `planes/` live).
 fn server_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("OPENTHUNDER_SERVER_DIR") {
         return PathBuf::from(dir);
@@ -164,8 +287,7 @@ fn server_dir() -> PathBuf {
 
 fn load_planes(server_dir: &Path) -> Vec<PlaneConfig> {
     let mut planes = Vec::new();
-    let dir = server_dir.join("planes");
-    let Ok(entries) = std::fs::read_dir(&dir) else {
+    let Ok(entries) = std::fs::read_dir(server_dir.join("planes")) else {
         return planes;
     };
     let mut paths: Vec<PathBuf> = entries
@@ -179,8 +301,7 @@ fn load_planes(server_dir: &Path) -> Vec<PlaneConfig> {
             .and_then(|name| name.to_str())
             .unwrap_or("plane")
             .to_string();
-        let conf = path.join("plane.conf");
-        let plane = match std::fs::read_to_string(&conf) {
+        let plane = match std::fs::read_to_string(path.join("plane.conf")) {
             Ok(text) => PlaneConfig::parse(&id, &text),
             Err(_) => PlaneConfig {
                 id: id.clone(),
@@ -210,13 +331,15 @@ fn save_map(editor: &mut Editor) {
     }
 }
 
-fn load_map(editor: &mut Editor, id: &str) {
+fn load_map(editor: &mut Editor) {
+    let id = editor.doc.id.clone();
     let path = editor.maps_dir().join(format!("{id}.map"));
     match std::fs::read_to_string(&path) {
         Ok(text) => {
-            editor.doc = MapDoc::parse(id, &text);
+            editor.doc = MapDoc::parse(&id, &text);
             editor.selected = None;
             editor.dirty = true;
+            editor.ui_dirty = true;
             editor.status = format!("Loaded {}", path.display());
         }
         Err(err) => editor.status = format!("Load failed: {err}"),
@@ -232,18 +355,27 @@ fn save_plane(editor: &mut Editor) {
         editor.status = format!("Could not create {}: {err}", dir.display());
         return;
     }
-    let path = dir.join("plane.conf");
-    match std::fs::write(&path, plane.to_config_string()) {
-        Ok(()) => editor.status = format!("Saved {}", path.display()),
+    match std::fs::write(dir.join("plane.conf"), plane.to_config_string()) {
+        Ok(()) => editor.status = format!("Saved plane '{}'.", plane.id),
         Err(err) => editor.status = format!("Save failed: {err}"),
     }
 }
 
+fn slug(value: &str) -> String {
+    let slug: String = value
+        .trim()
+        .to_lowercase()
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+        .collect();
+    slug.trim_matches('-').to_string()
+}
+
 // ---------------------------------------------------------------------------
-// Setup
+// Scene setup
 // ---------------------------------------------------------------------------
 
-fn setup(
+fn setup_scene(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -254,10 +386,9 @@ fn setup(
             fov: 0.9,
             ..default()
         }),
-        Transform::from_xyz(0.0, 220.0, 420.0).looking_at(Vec3::new(0.0, 0.0, 0.0), Vec3::Y),
+        Transform::from_xyz(0.0, 260.0, 460.0).looking_at(Vec3::ZERO, Vec3::Y),
         EditorCamera,
     ));
-
     commands.spawn((
         DirectionalLight {
             illuminance: 14_000.0,
@@ -267,7 +398,6 @@ fn setup(
         Transform::from_xyz(2000.0, 4000.0, 1000.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
-    // Ground plane.
     let ground = materials.add(StandardMaterial {
         base_color: Color::srgb(0.24, 0.34, 0.18),
         perceptual_roughness: 1.0,
@@ -278,10 +408,10 @@ fn setup(
         MeshMaterial3d(ground),
     ));
 
-    // A 1 km grid so distances are readable.
+    // 1 km grid.
     let line = meshes.add(Cuboid::new(1.0, 0.4, 20_000.0));
     let line_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.6, 0.7, 0.6, 0.5),
+        base_color: Color::srgba(0.6, 0.7, 0.6, 0.45),
         alpha_mode: AlphaMode::Blend,
         ..default()
     });
@@ -302,452 +432,976 @@ fn setup(
         }
         step += 1000.0;
     }
+}
 
-    commands.spawn((
-        Node {
-            position_type: PositionType::Absolute,
-            top: px(10.0),
-            left: px(12.0),
-            ..default()
-        },
-        Text::new("OpenThunder mission editor"),
+/// Preview geometry rebuilt from the document.
+#[derive(Component)]
+struct Preview;
+
+// ---------------------------------------------------------------------------
+// UI construction
+// ---------------------------------------------------------------------------
+
+const PANEL: Color = Color::srgb(0.13, 0.14, 0.16);
+const BAR: Color = Color::srgb(0.16, 0.17, 0.20);
+const BTN: Color = Color::srgb(0.24, 0.26, 0.30);
+const BTN_ACTIVE: Color = Color::srgb(0.30, 0.52, 0.85);
+const BORDER: Color = Color::srgb(0.28, 0.30, 0.34);
+const TEXT: Color = Color::srgb(0.88, 0.90, 0.93);
+const DIM: Color = Color::srgb(0.60, 0.63, 0.68);
+
+fn text(content: impl Into<String>, size: f32, color: Color) -> (Text, TextFont, TextColor) {
+    (
+        Text::new(content),
         TextFont {
-            font_size: FontSize::Px(16.0),
+            font_size: FontSize::Px(size),
             ..default()
         },
-        TextColor(Color::srgb(0.92, 1.0, 0.92)),
-        EditorHud,
-    ));
+        TextColor(color),
+    )
+}
+
+/// A clickable button node.
+fn button(parent: &mut ChildSpawnerCommands, label: &str, action: Action, active: bool) {
+    let base = if active { BTN_ACTIVE } else { BTN };
+    parent
+        .spawn((
+            Button,
+            Node {
+                padding: UiRect::axes(px(9), px(4)),
+                border: UiRect::all(px(1)),
+                ..default()
+            },
+            BackgroundColor(base),
+            BorderColor::all(BORDER),
+            ActionBtn(action),
+            BtnColors {
+                base,
+                active: BTN_ACTIVE,
+                is_active: active,
+            },
+        ))
+        .with_children(|parent| {
+            parent.spawn(text(label, 13.0, TEXT));
+        });
+}
+
+fn spawn_ui(mut commands: Commands) {
+    // Root: full-screen column of [toolbar, middle, status].
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: percent(100),
+                height: percent(100),
+                flex_direction: FlexDirection::Column,
+                ..default()
+            },
+            GlobalZIndex(10),
+        ))
+        .with_children(|root| {
+            // --- Toolbar ---
+            root.spawn((
+                Node {
+                    width: percent(100),
+                    height: px(TOP_H),
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: px(6),
+                    padding: UiRect::horizontal(px(8)),
+                    ..default()
+                },
+                BackgroundColor(BAR),
+                BorderColor::all(BORDER),
+            ))
+            .with_children(|bar| {
+                button(bar, "New", Action::NewMap, false);
+                button(bar, "Save", Action::SaveMap, false);
+                button(bar, "Reload", Action::ReloadMap, false);
+                spacer(bar, 12.0);
+                bar.spawn((
+                    Text::new("  |  "),
+                    TextFont {
+                        font_size: FontSize::Px(14.0),
+                        ..default()
+                    },
+                    TextColor(BORDER),
+                ));
+                button(bar, "Map", Action::SetMode(Mode::Map), false);
+                button(bar, "Planes", Action::SetMode(Mode::Planes), false);
+                spacer(bar, 12.0);
+                button(bar, "Play / Stop test server", Action::ToggleServer, false);
+                spacer(bar, 16.0);
+                bar.spawn((
+                    Button,
+                    Node {
+                        padding: UiRect::axes(px(9), px(4)),
+                        ..default()
+                    },
+                    BackgroundColor(BAR),
+                    ActionBtn(Action::FocusMapName),
+                    BtnColors {
+                        base: BAR,
+                        active: BAR,
+                        is_active: false,
+                    },
+                ))
+                .with_children(|parent| {
+                    parent.spawn((text("map: untitled", 14.0, TEXT), ToolbarTitle));
+                });
+                spacer(bar, 16.0);
+                button(bar, "Quit", Action::Quit, false);
+            });
+
+            // --- Middle row: left dock | viewport | right dock ---
+            root.spawn(Node {
+                width: percent(100),
+                flex_grow: 1.0,
+                flex_direction: FlexDirection::Row,
+                ..default()
+            })
+            .with_children(|row| {
+                // Left dock: palette + scene tree.
+                row.spawn((
+                    Node {
+                        width: px(LEFT_W),
+                        height: percent(100),
+                        flex_direction: FlexDirection::Column,
+                        padding: UiRect::all(px(6)),
+                        row_gap: px(4),
+                        ..default()
+                    },
+                    BackgroundColor(PANEL),
+                    BorderColor::all(BORDER),
+                ))
+                .with_children(|dock| {
+                    dock.spawn(text("Add object", 13.0, DIM));
+                    dock.spawn((
+                        Node {
+                            flex_direction: FlexDirection::Row,
+                            flex_wrap: FlexWrap::Wrap,
+                            column_gap: px(4),
+                            row_gap: px(4),
+                            ..default()
+                        },
+                        PaletteList,
+                    ));
+                    spacer_h(dock, 6.0);
+                    dock.spawn(text("Scene", 13.0, DIM));
+                    dock.spawn((
+                        Node {
+                            width: percent(100),
+                            flex_grow: 1.0,
+                            flex_direction: FlexDirection::Column,
+                            row_gap: px(2),
+                            overflow: Overflow::clip(),
+                            ..default()
+                        },
+                        SceneList,
+                    ));
+                });
+
+                // Viewport / planes panel.
+                row.spawn(Node {
+                    flex_grow: 1.0,
+                    height: percent(100),
+                    ..default()
+                })
+                .with_children(|center| {
+                    center
+                        .spawn((
+                            Node {
+                                width: percent(100),
+                                height: percent(100),
+                                flex_direction: FlexDirection::Column,
+                                padding: UiRect::all(px(10)),
+                                row_gap: px(6),
+                                display: Display::None,
+                                overflow: Overflow::clip(),
+                                ..default()
+                            },
+                            BackgroundColor(PANEL),
+                            PlanesPanel,
+                        ))
+                        .with_children(|panel| {
+                            panel.spawn((
+                                Node {
+                                    width: percent(100),
+                                    flex_grow: 1.0,
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: px(4),
+                                    overflow: Overflow::clip(),
+                                    ..default()
+                                },
+                                PlanesList,
+                            ));
+                        });
+                });
+
+                // Right dock: inspector.
+                row.spawn((
+                    Node {
+                        width: px(RIGHT_W),
+                        height: percent(100),
+                        flex_direction: FlexDirection::Column,
+                        padding: UiRect::all(px(6)),
+                        row_gap: px(4),
+                        ..default()
+                    },
+                    BackgroundColor(PANEL),
+                    BorderColor::all(BORDER),
+                ))
+                .with_children(|dock| {
+                    dock.spawn(text("Inspector", 13.0, DIM));
+                    dock.spawn((
+                        Node {
+                            width: percent(100),
+                            flex_grow: 1.0,
+                            flex_direction: FlexDirection::Column,
+                            row_gap: px(3),
+                            overflow: Overflow::clip(),
+                            ..default()
+                        },
+                        InspectorList,
+                    ));
+                });
+            });
+
+            // --- Status bar ---
+            root.spawn((
+                Node {
+                    width: percent(100),
+                    height: px(BOTTOM_H),
+                    align_items: AlignItems::Center,
+                    padding: UiRect::horizontal(px(8)),
+                    ..default()
+                },
+                BackgroundColor(BAR),
+                BorderColor::all(BORDER),
+            ))
+            .with_children(|bar| {
+                bar.spawn((text("", 12.0, DIM), StatusText));
+            });
+        });
+
+    // The modal dialog (hidden until opened).
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: percent(100),
+                height: percent(100),
+                display: Display::None,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
+            GlobalZIndex(100),
+            DialogRoot,
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Node {
+                    width: px(460),
+                    flex_direction: FlexDirection::Column,
+                    padding: UiRect::all(px(14)),
+                    row_gap: px(8),
+                    border: UiRect::all(px(1)),
+                    ..default()
+                },
+                BackgroundColor(PANEL),
+                BorderColor::all(BORDER),
+                DialogBody,
+            ));
+        });
+}
+
+fn spacer(parent: &mut ChildSpawnerCommands, width: f32) {
+    parent.spawn(Node {
+        width: px(width),
+        height: px(1),
+        ..default()
+    });
+}
+
+fn spacer_h(parent: &mut ChildSpawnerCommands, height: f32) {
+    parent.spawn(Node {
+        width: percent(100),
+        height: px(height),
+        ..default()
+    });
 }
 
 // ---------------------------------------------------------------------------
-// Camera (free-fly)
+// Buttons: hover/press visuals and dispatch
+// ---------------------------------------------------------------------------
+
+fn button_visuals(
+    mut buttons: Query<(&Interaction, &BtnColors, &mut BackgroundColor), Changed<Interaction>>,
+) {
+    for (interaction, colors, mut background) in &mut buttons {
+        background.0 = match interaction {
+            Interaction::Pressed => {
+                if colors.is_active {
+                    colors.active
+                } else {
+                    colors.base.mix(&Color::BLACK, 0.25)
+                }
+            }
+            Interaction::Hovered => {
+                if colors.is_active {
+                    colors.active
+                } else {
+                    colors.base.mix(&Color::WHITE, 0.18)
+                }
+            }
+            Interaction::None => {
+                if colors.is_active {
+                    colors.active
+                } else {
+                    colors.base
+                }
+            }
+        };
+    }
+}
+
+fn handle_buttons(
+    interactions: Query<(&Interaction, &ActionBtn), (Changed<Interaction>, With<Button>)>,
+    mut editor: ResMut<Editor>,
+) {
+    for (interaction, action) in &interactions {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        apply_action(&mut editor, action.0.clone());
+    }
+}
+
+fn apply_action(editor: &mut Editor, action: Action) {
+    match action {
+        Action::NewMap => {
+            editor.doc = MapDoc::new("untitled");
+            editor.selected = None;
+            editor.dirty = true;
+            editor.ui_dirty = true;
+            editor.status = "New map.".to_string();
+        }
+        Action::SaveMap => save_map(editor),
+        Action::ReloadMap => load_map(editor),
+        Action::SetMode(mode) => {
+            editor.mode = mode;
+            editor.ui_dirty = true;
+        }
+        Action::ToggleServer => toggle_server(editor),
+        Action::FocusMapName => {
+            editor.input.field = Some(Focus::MapName);
+            editor.input.buffer = editor.doc.name.clone();
+            editor.status = "Type the map name, Enter to apply, Esc to cancel.".to_string();
+        }
+        Action::PickKind(kind) => {
+            editor.place = kind;
+            editor.status = format!("Placing {}. Click the viewport.", kind.label());
+            editor.ui_dirty = true;
+        }
+        Action::SelectObject(index) => {
+            editor.selected = Some(index);
+            editor.ui_dirty = true;
+        }
+        Action::DeleteObject => {
+            if let Some(index) = editor.selected.take() {
+                if index < editor.doc.objects.len() {
+                    editor.doc.objects.remove(index);
+                    editor.dirty = true;
+                    editor.ui_dirty = true;
+                    editor.status = "Deleted object.".to_string();
+                }
+            }
+        }
+        Action::CycleKind => {
+            if let Some(object) = editor.selected_object_mut() {
+                let current = ObjectKind::ALL
+                    .iter()
+                    .position(|kind| *kind == object.kind)
+                    .unwrap_or(0);
+                let next = ObjectKind::ALL[(current + 1) % ObjectKind::ALL.len()];
+                object.kind = next;
+                let scale = next.default_scale();
+                let color = next.default_color();
+                object.scale = scale;
+                object.color = color;
+                editor.dirty = true;
+                editor.ui_dirty = true;
+            }
+        }
+        Action::Nudge(prop, delta) => {
+            if let Some(object) = editor.selected_object_mut() {
+                match prop {
+                    Prop::PosX => object.position[0] += delta,
+                    Prop::PosY => object.position[1] += delta,
+                    Prop::PosZ => object.position[2] += delta,
+                    Prop::Yaw => object.yaw += delta,
+                    Prop::ScaleX => object.scale[0] = (object.scale[0] + delta).max(0.5),
+                    Prop::ScaleY => object.scale[1] = (object.scale[1] + delta).max(0.5),
+                    Prop::ScaleZ => object.scale[2] = (object.scale[2] + delta).max(0.5),
+                    Prop::ColorR => object.color[0] = (object.color[0] + delta).clamp(0.0, 1.0),
+                    Prop::ColorG => object.color[1] = (object.color[1] + delta).clamp(0.0, 1.0),
+                    Prop::ColorB => object.color[2] = (object.color[2] + delta).clamp(0.0, 1.0),
+                }
+                editor.dirty = true;
+                editor.ui_dirty = true;
+            }
+        }
+        Action::AddSpawn => {
+            let team = editor.spawn_team;
+            editor
+                .doc
+                .spawns
+                .push(SpawnPoint::new(team, [0.0, 0.0, 0.0]));
+            editor.dirty = true;
+            editor.ui_dirty = true;
+            editor.status = format!("Added spawn point for team {team}.");
+        }
+        Action::SwitchTeam => {
+            editor.spawn_team = 1 - editor.spawn_team;
+            editor.ui_dirty = true;
+        }
+        Action::ClearSpawns => {
+            editor.doc.spawns.clear();
+            editor.dirty = true;
+            editor.ui_dirty = true;
+        }
+        Action::SelectPlane(index) => {
+            editor.plane_selected = index;
+            editor.ui_dirty = true;
+        }
+        Action::OpenDialog(kind) => {
+            editor.dialog = Some(Dialog {
+                kind,
+                name: editor
+                    .planes
+                    .get(editor.plane_selected)
+                    .map(|plane| plane.name.clone())
+                    .unwrap_or_else(|| "New plane".to_string()),
+                model: editor
+                    .planes
+                    .get(editor.plane_selected)
+                    .and_then(|plane| plane.model.clone())
+                    .unwrap_or_default(),
+                focus: match kind {
+                    DialogKind::NewPlane => Focus::DialogName,
+                    DialogKind::SetModel => Focus::DialogModel,
+                },
+            });
+            editor.input.field = None;
+            editor.ui_dirty = true;
+        }
+        Action::RenamePlane => {
+            editor.input.field = Some(Focus::PlaneName);
+            editor.input.buffer = editor
+                .planes
+                .get(editor.plane_selected)
+                .map(|plane| plane.name.clone())
+                .unwrap_or_default();
+            editor.status = "Type the new plane name, Enter to apply.".to_string();
+        }
+        Action::DeletePlane => {
+            let Some(id) = editor
+                .planes
+                .get(editor.plane_selected)
+                .map(|plane| plane.id.clone())
+            else {
+                return;
+            };
+            let _ = std::fs::remove_dir_all(editor.planes_dir().join(&id));
+            editor.planes.remove(editor.plane_selected);
+            editor.ui_dirty = true;
+            editor.status = format!("Deleted plane '{id}'.");
+        }
+        Action::FocusDialog(focus) => {
+            if let Some(dialog) = editor.dialog.as_mut() {
+                dialog.focus = focus;
+            }
+            editor.ui_dirty = true;
+        }
+        Action::DialogConfirm => confirm_dialog(editor),
+        Action::DialogCancel => {
+            editor.dialog = None;
+            editor.ui_dirty = true;
+        }
+        Action::Quit => std::process::exit(0),
+    }
+}
+
+fn confirm_dialog(editor: &mut Editor) {
+    let Some(dialog) = editor.dialog.take() else {
+        return;
+    };
+    match dialog.kind {
+        DialogKind::NewPlane => {
+            let name = dialog.name.trim();
+            if name.is_empty() {
+                editor.status = "Plane name cannot be empty.".to_string();
+            } else {
+                let id = slug(name);
+                let model = dialog.model.trim();
+                let plane = PlaneConfig {
+                    id: id.clone(),
+                    name: name.to_string(),
+                    model: (!model.is_empty()).then(|| model.to_string()),
+                    ..Default::default()
+                };
+                editor.planes.push(plane);
+                editor.plane_selected = editor.planes.len() - 1;
+                save_plane(editor);
+                editor.status = format!("Created plane '{id}'.");
+            }
+        }
+        DialogKind::SetModel => {
+            if let Some(plane) = editor.planes.get_mut(editor.plane_selected) {
+                let model = dialog.model.trim();
+                plane.model = (!model.is_empty()).then(|| model.to_string());
+                save_plane(editor);
+            }
+        }
+    }
+    editor.ui_dirty = true;
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic panels
+// ---------------------------------------------------------------------------
+
+fn rebuild_ui(
+    mut commands: Commands,
+    mut editor: ResMut<Editor>,
+    palette: Query<Entity, With<PaletteList>>,
+    scene: Query<Entity, With<SceneList>>,
+    inspector: Query<Entity, With<InspectorList>>,
+    planes: Query<Entity, With<PlanesList>>,
+    mut planes_panel: Query<&mut Node, With<PlanesPanel>>,
+    dialog_root: Query<Entity, With<DialogRoot>>,
+    dialog_body: Query<Entity, With<DialogBody>>,
+) {
+    if !editor.ui_dirty {
+        return;
+    }
+    editor.ui_dirty = false;
+
+    if let Ok(mut node) = planes_panel.single_mut() {
+        node.display = if editor.mode == Mode::Planes {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+
+    if let Ok(entity) = palette.single() {
+        commands.entity(entity).despawn_related::<Children>();
+        commands.entity(entity).with_children(|parent| {
+            for kind in ObjectKind::ALL {
+                button(
+                    parent,
+                    kind.label(),
+                    Action::PickKind(kind),
+                    editor.place == kind,
+                );
+            }
+        });
+    }
+
+    if let Ok(entity) = scene.single() {
+        commands.entity(entity).despawn_related::<Children>();
+        commands.entity(entity).with_children(|parent| {
+            if editor.doc.objects.is_empty() {
+                parent.spawn(text("(no objects yet)", 12.0, DIM));
+            }
+            for (index, object) in editor.doc.objects.iter().enumerate() {
+                let label = format!("{index:>3}  {}", object.kind.label());
+                let selected = editor.selected == Some(index);
+                list_row(parent, &label, Action::SelectObject(index), selected);
+            }
+            if !editor.doc.spawns.is_empty() {
+                parent.spawn(text("Spawn points", 12.0, DIM));
+                for (index, spawn) in editor.doc.spawns.iter().enumerate() {
+                    let label = format!("  spawn {} (team {})", index, spawn.team);
+                    list_row(parent, &label, Action::AddSpawn, false);
+                }
+            }
+            list_row(
+                parent,
+                &format!("+ Add spawn (team {})", editor.spawn_team),
+                Action::AddSpawn,
+                false,
+            );
+            list_row(parent, "Switch team", Action::SwitchTeam, false);
+            list_row(parent, "Clear spawns", Action::ClearSpawns, false);
+        });
+    }
+
+    if let Ok(entity) = inspector.single() {
+        commands.entity(entity).despawn_related::<Children>();
+        commands.entity(entity).with_children(|parent| {
+            build_inspector(parent, &editor);
+        });
+    }
+
+    if let Ok(entity) = planes.single() {
+        commands.entity(entity).despawn_related::<Children>();
+        commands.entity(entity).with_children(|parent| {
+            parent.spawn(text("Planes", 15.0, TEXT));
+            parent.spawn(text(
+                "Click a plane to select it. \"New plane…\" opens a dialog.",
+                12.0,
+                DIM,
+            ));
+            spacer_h(parent, 6.0);
+            for (index, plane) in editor.planes.iter().enumerate() {
+                let label = format!(
+                    "{}  ({})",
+                    plane.name,
+                    plane.model.as_deref().unwrap_or("procedural")
+                );
+                list_row(
+                    parent,
+                    &label,
+                    Action::SelectPlane(index),
+                    index == editor.plane_selected,
+                );
+            }
+            spacer_h(parent, 8.0);
+            row(parent, |row| {
+                button(
+                    row,
+                    "New plane…",
+                    Action::OpenDialog(DialogKind::NewPlane),
+                    false,
+                );
+                button(
+                    row,
+                    "Set model…",
+                    Action::OpenDialog(DialogKind::SetModel),
+                    false,
+                );
+                button(row, "Rename", Action::RenamePlane, false);
+                button(row, "Delete", Action::DeletePlane, false);
+            });
+        });
+    }
+
+    if let Ok(entity) = dialog_root.single() {
+        let open = editor.dialog.is_some();
+        commands.entity(entity).insert(Node {
+            position_type: PositionType::Absolute,
+            width: percent(100),
+            height: percent(100),
+            display: if open { Display::Flex } else { Display::None },
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        });
+    }
+    if let (Some(dialog), Ok(entity)) = (editor.dialog.as_ref(), dialog_body.single()) {
+        commands.entity(entity).despawn_related::<Children>();
+        commands.entity(entity).with_children(|parent| {
+            let title = match dialog.kind {
+                DialogKind::NewPlane => "New plane",
+                DialogKind::SetModel => "Set model",
+            };
+            parent.spawn(text(title, 18.0, TEXT));
+            if dialog.kind == DialogKind::NewPlane {
+                field_row(
+                    parent,
+                    "Name",
+                    &dialog.name,
+                    dialog.focus == Focus::DialogName,
+                    Action::FocusDialog(Focus::DialogName),
+                );
+            }
+            field_row(
+                parent,
+                "Model (glTF/GLB)",
+                &dialog.model,
+                dialog.focus == Focus::DialogModel,
+                Action::FocusDialog(Focus::DialogModel),
+            );
+            parent.spawn(text(
+                "Model path is relative to the client's assets/ (optional).",
+                11.0,
+                DIM,
+            ));
+            spacer_h(parent, 6.0);
+            row(parent, |row| {
+                button(row, "Create", Action::DialogConfirm, true);
+                button(row, "Cancel", Action::DialogCancel, false);
+            });
+        });
+    }
+}
+
+/// A full-width clickable list row.
+fn list_row(parent: &mut ChildSpawnerCommands, label: &str, action: Action, selected: bool) {
+    let base = if selected { BTN_ACTIVE } else { BTN };
+    parent
+        .spawn((
+            Button,
+            Node {
+                width: percent(100),
+                padding: UiRect::axes(px(6), px(3)),
+                ..default()
+            },
+            BackgroundColor(base),
+            ActionBtn(action),
+            BtnColors {
+                base,
+                active: BTN_ACTIVE,
+                is_active: selected,
+            },
+        ))
+        .with_children(|parent| {
+            parent.spawn(text(label, 12.5, TEXT));
+        });
+}
+
+/// A horizontal row of buttons/children.
+fn row(parent: &mut ChildSpawnerCommands, build: impl FnOnce(&mut ChildSpawnerCommands)) {
+    parent
+        .spawn(Node {
+            flex_direction: FlexDirection::Row,
+            column_gap: px(6),
+            ..default()
+        })
+        .with_children(build);
+}
+
+/// A clickable text field (used in the dialog).
+fn field_row(
+    parent: &mut ChildSpawnerCommands,
+    label: &str,
+    value: &str,
+    focused: bool,
+    action: Action,
+) {
+    parent.spawn(text(label, 12.0, DIM));
+    let base = if focused { BTN_ACTIVE } else { BTN };
+    parent
+        .spawn((
+            Button,
+            Node {
+                width: percent(100),
+                padding: UiRect::axes(px(6), px(4)),
+                border: UiRect::all(px(1)),
+                ..default()
+            },
+            BackgroundColor(base),
+            BorderColor::all(BORDER),
+            ActionBtn(action),
+            BtnColors {
+                base,
+                active: BTN_ACTIVE,
+                is_active: focused,
+            },
+        ))
+        .with_children(|parent| {
+            let shown = if focused {
+                format!("{value}_")
+            } else if value.is_empty() {
+                "(click to type)".to_string()
+            } else {
+                value.to_string()
+            };
+            parent.spawn(text(shown, 13.0, TEXT));
+        });
+}
+
+fn build_inspector(parent: &mut ChildSpawnerCommands, editor: &Editor) {
+    let Some(object) = editor.selected_object() else {
+        parent.spawn(text(
+            "Nothing selected.\n\nClick an object in the scene list, or right-click it in the viewport.",
+            12.0,
+            DIM,
+        ));
+        return;
+    };
+
+    parent.spawn(text(
+        format!("Object #{}", editor.selected.unwrap()),
+        14.0,
+        TEXT,
+    ));
+    row(parent, |row| {
+        button(
+            row,
+            &format!("Kind: {}", object.kind.label()),
+            Action::CycleKind,
+            false,
+        );
+        button(row, "Delete", Action::DeleteObject, false);
+    });
+    spacer_h(parent, 4.0);
+
+    prop_row(parent, "X", object.position[0], Prop::PosX, 5.0);
+    prop_row(parent, "Y", object.position[1], Prop::PosY, 5.0);
+    prop_row(parent, "Z", object.position[2], Prop::PosZ, 5.0);
+    prop_row(parent, "Yaw", object.yaw, Prop::Yaw, 5.0);
+    prop_row(parent, "Scale X", object.scale[0], Prop::ScaleX, 2.0);
+    prop_row(parent, "Scale Y", object.scale[1], Prop::ScaleY, 2.0);
+    prop_row(parent, "Scale Z", object.scale[2], Prop::ScaleZ, 2.0);
+    prop_row(parent, "Red", object.color[0], Prop::ColorR, 0.05);
+    prop_row(parent, "Green", object.color[1], Prop::ColorG, 0.05);
+    prop_row(parent, "Blue", object.color[2], Prop::ColorB, 0.05);
+}
+
+fn prop_row(parent: &mut ChildSpawnerCommands, label: &str, value: f32, prop: Prop, step: f32) {
+    parent
+        .spawn(Node {
+            width: percent(100),
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            column_gap: px(4),
+            ..default()
+        })
+        .with_children(|row| {
+            row.spawn(Node {
+                width: px(70),
+                ..default()
+            })
+            .with_children(|cell| {
+                cell.spawn(text(label, 12.5, DIM));
+            });
+            button(row, "−", Action::Nudge(prop, -step), false);
+            row.spawn(Node {
+                flex_grow: 1.0,
+                justify_content: JustifyContent::Center,
+                ..default()
+            })
+            .with_children(|cell| {
+                cell.spawn(text(format!("{value:.2}"), 13.0, TEXT));
+            });
+            button(row, "+", Action::Nudge(prop, step), false);
+        });
+}
+
+// ---------------------------------------------------------------------------
+// Camera (free-fly; look while the right mouse button is held)
 // ---------------------------------------------------------------------------
 
 fn camera_control(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
+    mut wheel: MessageReader<MouseWheel>,
     mut editor: ResMut<Editor>,
     mut camera: Query<&mut Transform, With<EditorCamera>>,
 ) {
-    if editor.input.field.is_some() {
-        return; // typing
-    }
     let Ok(mut transform) = camera.single_mut() else {
         return;
     };
     let dt = time.delta_secs();
 
-    // Mouse look (yaw/pitch kept in the resource so pitch can be clamped).
-    let sensitivity = 0.0025;
-    editor.look.x -= motion.delta.x * sensitivity;
-    editor.look.y = (editor.look.y - motion.delta.y * sensitivity).clamp(-1.5, 1.5);
+    let mut scrolled = 0.0;
+    for event in wheel.read() {
+        scrolled += event.y;
+    }
+
+    if editor.input.field.is_none() && mouse.pressed(MouseButton::Right) {
+        let sensitivity = 0.0025;
+        editor.look.x -= motion.delta.x * sensitivity;
+        editor.look.y = (editor.look.y - motion.delta.y * sensitivity).clamp(-1.5, 1.5);
+    }
     transform.rotation =
         Quat::from_rotation_y(editor.look.x) * Quat::from_rotation_x(editor.look.y);
 
     let forward = transform.rotation * Vec3::NEG_Z;
     let right = transform.rotation * Vec3::X;
     let mut dir = Vec3::ZERO;
-    if keys.pressed(KeyCode::KeyW) {
-        dir += forward;
+    if editor.input.field.is_none() {
+        if keys.pressed(KeyCode::KeyW) {
+            dir += forward;
+        }
+        if keys.pressed(KeyCode::KeyS) {
+            dir -= forward;
+        }
+        if keys.pressed(KeyCode::KeyD) {
+            dir += right;
+        }
+        if keys.pressed(KeyCode::KeyA) {
+            dir -= right;
+        }
+        if keys.pressed(KeyCode::KeyE) {
+            dir += Vec3::Y;
+        }
+        if keys.pressed(KeyCode::KeyQ) {
+            dir -= Vec3::Y;
+        }
     }
-    if keys.pressed(KeyCode::KeyS) {
-        dir -= forward;
-    }
-    if keys.pressed(KeyCode::KeyD) {
-        dir += right;
-    }
-    if keys.pressed(KeyCode::KeyA) {
-        dir -= right;
-    }
-    if keys.pressed(KeyCode::KeyE) {
-        dir += Vec3::Y;
-    }
-    if keys.pressed(KeyCode::KeyQ) {
-        dir -= Vec3::Y;
-    }
+    dir += forward * scrolled * 0.6;
     let speed = if keys.pressed(KeyCode::ShiftLeft) {
-        1200.0
+        editor.speed * 6.0
     } else {
-        160.0
+        editor.speed
     };
     transform.translation += dir.normalize_or_zero() * speed * dt;
 }
 
 // ---------------------------------------------------------------------------
-// Text input
+// Viewport input
 // ---------------------------------------------------------------------------
 
-fn text_input(mut events: MessageReader<KeyboardInput>, mut editor: ResMut<Editor>) {
-    if editor.input.field.is_none() {
-        events.clear();
-        return;
-    }
-    for event in events.read() {
-        if !event.state.is_pressed() {
-            continue;
-        }
-        match event.key_code {
-            KeyCode::Enter => {
-                let field = editor.input.field.take().unwrap();
-                let value = std::mem::take(&mut editor.input.buffer);
-                apply_text(&mut editor, field, value);
-            }
-            KeyCode::Escape => {
-                editor.input.field = None;
-                editor.input.buffer.clear();
-                editor.status = "Cancelled.".to_string();
-            }
-            KeyCode::Backspace => {
-                editor.input.buffer.pop();
-            }
-            _ => {
-                if let Some(text) = &event.text {
-                    for ch in text.chars() {
-                        if ch.is_ascii_alphanumeric() || "-_/. ".contains(ch) {
-                            editor.input.buffer.push(ch);
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn apply_text(editor: &mut Editor, field: Field, value: String) {
-    let value = value.trim().to_string();
-    match field {
-        Field::NewMap => {
-            if value.is_empty() {
-                editor.status = "New map cancelled (no name).".to_string();
-                return;
-            }
-            let id = slug(&value);
-            editor.doc = MapDoc::new(&id);
-            editor.doc.name = value;
-            editor.selected = None;
-            editor.dirty = true;
-            editor.status = format!("New map '{id}'.");
-        }
-        Field::Rename => {
-            if !value.is_empty() {
-                editor.doc.name = value;
-                editor.dirty = true;
-            }
-        }
-        Field::NewPlane => {
-            if value.is_empty() {
-                editor.status = "New plane cancelled (no name).".to_string();
-                return;
-            }
-            let id = slug(&value);
-            let plane = PlaneConfig {
-                id: id.clone(),
-                name: value,
-                ..Default::default()
-            };
-            editor.planes.push(plane);
-            editor.plane_selected = editor.planes.len() - 1;
-            save_plane(editor);
-            editor.status = format!("Created plane '{id}'.");
-        }
-        Field::PlaneName => {
-            if let Some(plane) = editor.planes.get_mut(editor.plane_selected) {
-                if !value.is_empty() {
-                    plane.name = value;
-                    save_plane(editor);
-                }
-            }
-        }
-        Field::Model => {
-            if let Some(plane) = editor.planes.get_mut(editor.plane_selected) {
-                plane.model = if value.is_empty() { None } else { Some(value) };
-                save_plane(editor);
-            }
-        }
-    }
-}
-
-fn slug(value: &str) -> String {
-    value
-        .trim()
-        .to_lowercase()
-        .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
-        .collect::<String>()
-        .trim_matches('-')
-        .to_string()
-}
-
-// ---------------------------------------------------------------------------
-// Editing input
-// ---------------------------------------------------------------------------
-
-fn editor_input(
-    keys: Res<ButtonInput<KeyCode>>,
+fn viewport_input(
     mouse: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<EditorCamera>>,
     mut editor: ResMut<Editor>,
 ) {
-    if editor.input.field.is_some() {
+    if editor.input.field.is_some() || editor.dialog.is_some() {
         return;
     }
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let Some(cursor) = window.cursor_position() else {
+        return;
+    };
     let Ok((camera, camera_transform)) = camera.single() else {
         return;
     };
-    let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+    let size = window.resolution.size();
+    if !in_viewport(cursor, size) {
+        return;
+    }
+    let Ok(ray) = camera.viewport_to_world(camera_transform, cursor) else {
+        return;
+    };
 
-    // --- Global keys ---
-    if keys.just_pressed(KeyCode::Escape) {
-        editor.mode = if editor.mode == Mode::Map {
-            Mode::Planes
-        } else {
-            Mode::Map
+    if mouse.just_pressed(MouseButton::Left) && editor.mode == Mode::Map {
+        if let Some(point) = ground_hit(ray) {
+            let mut object = MapObject::new(editor.place, point);
+            object.position[1] = object.scale[1] * 0.5;
+            editor.doc.objects.push(object);
+            editor.selected = Some(editor.doc.objects.len() - 1);
+            editor.dirty = true;
+            editor.ui_dirty = true;
+            editor.status = format!("Placed {}.", editor.place.label());
+        }
+    }
+    if mouse.just_pressed(MouseButton::Middle) && editor.mode == Mode::Map {
+        editor.selected = pick(&editor.doc, ray);
+        editor.ui_dirty = true;
+        editor.status = match editor.selected {
+            Some(index) => format!("Selected object #{index}."),
+            None => "No object under the cursor.".to_string(),
         };
     }
-    if keys.just_pressed(KeyCode::F2) {
-        editor.mode = Mode::Planes;
-    }
-    if keys.just_pressed(KeyCode::F1) {
-        editor.mode = Mode::Map;
-    }
-    if ctrl && keys.just_pressed(KeyCode::KeyS) {
-        if editor.mode == Mode::Planes {
-            save_plane(&mut editor);
-        } else {
-            save_map(&mut editor);
-        }
-    }
-    if keys.just_pressed(KeyCode::F5) {
-        toggle_server(&mut editor);
-    }
-    if ctrl && keys.just_pressed(KeyCode::KeyN) {
-        editor.input.field = Some(Field::NewMap);
-        editor.input.buffer.clear();
-        editor.status = "Type a name for the new map, then Enter.".to_string();
-    }
-    if ctrl && keys.just_pressed(KeyCode::KeyQ) {
-        std::process::exit(0);
-    }
-
-    if editor.mode == Mode::Planes {
-        planes_input(&keys, &mut editor);
-        return;
-    }
-
-    if keys.just_pressed(KeyCode::KeyR) {
-        editor.input.field = Some(Field::Rename);
-        editor.input.buffer = editor.doc.name.clone();
-        editor.status = "Type a new map name, then Enter.".to_string();
-    }
-    if ctrl && keys.just_pressed(KeyCode::KeyO) {
-        let id = editor.doc.id.clone();
-        load_map(&mut editor, &id);
-    }
-
-    // --- Palette: 1-8 pick the kind to place ---
-    for (index, kind) in ObjectKind::ALL.iter().enumerate() {
-        let code = digit_key(index);
-        if keys.just_pressed(code) {
-            editor.place = *kind;
-            editor.status = format!("Placing {}.", kind.label());
-        }
-    }
-
-    // --- Place / select with the mouse ---
-    let ray = screen_ray(camera, camera_transform);
-    if mouse.just_pressed(MouseButton::Left) {
-        if let Some(ray) = ray {
-            if let Some(point) = ground_hit(ray) {
-                let mut object = MapObject::new(editor.place, point);
-                object.position[1] = object.scale[1] * 0.5;
-                editor.doc.objects.push(object);
-                editor.selected = Some(editor.doc.objects.len() - 1);
-                editor.dirty = true;
-                editor.status = format!("Placed {}.", editor.place.label());
-            }
-        }
-    }
-    if mouse.just_pressed(MouseButton::Right) {
-        if let Some(ray) = ray {
-            editor.selected = pick(&editor.doc, ray);
-            editor.status = match editor.selected {
-                Some(index) => format!("Selected object #{index}."),
-                None => "No object under the cursor.".to_string(),
-            };
-        }
-    }
-    if keys.just_pressed(KeyCode::Tab) {
-        let count = editor.doc.objects.len();
-        if count > 0 {
-            editor.selected = Some(match editor.selected {
-                Some(index) => (index + 1) % count,
-                None => 0,
-            });
-        }
-    }
-
-    // --- Spawn points ---
-    if keys.just_pressed(KeyCode::KeyT) {
-        editor.spawn_team = 1 - editor.spawn_team;
-        editor.status = format!("Spawn team {}.", editor.spawn_team);
-    }
-    if keys.just_pressed(KeyCode::KeyB) {
-        if let Some(ray) = ray {
-            if let Some(point) = ground_hit(ray) {
-                let mut spawn = SpawnPoint::new(editor.spawn_team, point);
-                spawn.position[1] = 0.0;
-                editor.doc.spawns.push(spawn);
-                editor.dirty = true;
-                editor.status = format!("Added spawn for team {}.", editor.spawn_team);
-            }
-        }
-    }
-
-    // --- Edit the selected object ---
-    let Some(index) = editor.selected else {
-        return;
-    };
-    let Some(object) = editor.doc.objects.get_mut(index) else {
-        editor.selected = None;
-        return;
-    };
-    let step = if keys.pressed(KeyCode::ShiftLeft) {
-        50.0
-    } else {
-        5.0
-    };
-    let mut changed = false;
-    if keys.pressed(KeyCode::ArrowLeft) {
-        object.position[0] -= step;
-        changed = true;
-    }
-    if keys.pressed(KeyCode::ArrowRight) {
-        object.position[0] += step;
-        changed = true;
-    }
-    if keys.pressed(KeyCode::ArrowUp) {
-        object.position[2] -= step;
-        changed = true;
-    }
-    if keys.pressed(KeyCode::ArrowDown) {
-        object.position[2] += step;
-        changed = true;
-    }
-    if keys.pressed(KeyCode::PageUp) {
-        object.position[1] += step;
-        changed = true;
-    }
-    if keys.pressed(KeyCode::PageDown) {
-        object.position[1] -= step;
-        changed = true;
-    }
-    if keys.pressed(KeyCode::BracketLeft) {
-        object.yaw -= 5.0;
-        changed = true;
-    }
-    if keys.pressed(KeyCode::BracketRight) {
-        object.yaw += 5.0;
-        changed = true;
-    }
-    if keys.pressed(KeyCode::Minus) {
-        for axis in &mut object.scale {
-            *axis = (*axis - 2.0).max(1.0);
-        }
-        changed = true;
-    }
-    if keys.pressed(KeyCode::Equal) {
-        for axis in &mut object.scale {
-            *axis += 2.0;
-        }
-        changed = true;
-    }
-    if keys.just_pressed(KeyCode::Delete) {
-        editor.doc.objects.remove(index);
-        editor.selected = None;
-        editor.dirty = true;
-        editor.status = "Deleted object.".to_string();
-        return;
-    }
-    if changed {
-        editor.dirty = true;
-    }
 }
 
-fn planes_input(keys: &ButtonInput<KeyCode>, editor: &mut Editor) {
-    if editor.planes.is_empty() {
-        editor.plane_selected = 0;
-    } else {
-        editor.plane_selected = editor.plane_selected.min(editor.planes.len() - 1);
-    }
-    if keys.just_pressed(KeyCode::ArrowUp) {
-        editor.plane_selected = editor.plane_selected.saturating_sub(1);
-    }
-    if keys.just_pressed(KeyCode::ArrowDown) {
-        editor.plane_selected =
-            (editor.plane_selected + 1).min(editor.planes.len().saturating_sub(1));
-    }
-    if keys.just_pressed(KeyCode::KeyN) {
-        editor.input.field = Some(Field::NewPlane);
-        editor.input.buffer.clear();
-        editor.status = "Type a name for the new plane, then Enter.".to_string();
-    }
-    if keys.just_pressed(KeyCode::KeyR) {
-        editor.input.field = Some(Field::PlaneName);
-        editor.input.buffer = editor
-            .planes
-            .get(editor.plane_selected)
-            .map(|plane| plane.name.clone())
-            .unwrap_or_default();
-        editor.status = "Type a new name for the plane, then Enter.".to_string();
-    }
-    if keys.just_pressed(KeyCode::KeyM) {
-        editor.input.field = Some(Field::Model);
-        editor.input.buffer = editor
-            .planes
-            .get(editor.plane_selected)
-            .and_then(|plane| plane.model.clone())
-            .unwrap_or_default();
-        editor.status =
-            "Type a glTF/GLB path (relative to the client's assets/), then Enter.".to_string();
-    }
-    if keys.just_pressed(KeyCode::Delete) {
-        let Some(id) = editor
-            .planes
-            .get(editor.plane_selected)
-            .map(|plane| plane.id.clone())
-        else {
-            return;
-        };
-        let dir = editor.planes_dir().join(&id);
-        let _ = std::fs::remove_dir_all(&dir);
-        editor.planes.remove(editor.plane_selected);
-        editor.status = format!("Deleted plane '{id}'.");
-    }
+/// Whether a point is inside the central viewport rectangle.
+fn in_viewport(point: Vec2, size: Vec2) -> bool {
+    point.x > LEFT_W && point.x < size.x - RIGHT_W && point.y > TOP_H && point.y < size.y - BOTTOM_H
 }
 
-/// The `KeyCode` for the 1-based palette digit `index`.
-fn digit_key(index: usize) -> KeyCode {
-    match index {
-        0 => KeyCode::Digit1,
-        1 => KeyCode::Digit2,
-        2 => KeyCode::Digit3,
-        3 => KeyCode::Digit4,
-        4 => KeyCode::Digit5,
-        5 => KeyCode::Digit6,
-        6 => KeyCode::Digit7,
-        _ => KeyCode::Digit8,
-    }
-}
-
-/// A ray from the camera through the centre of the screen.
-fn screen_ray(camera: &Camera, camera_transform: &GlobalTransform) -> Option<Ray3d> {
-    let center = camera.logical_viewport_size()? / 2.0;
-    camera.viewport_to_world(camera_transform, center).ok()
-}
-
-/// Where a ray meets the ground plane (`y = 0`).
 fn ground_hit(ray: Ray3d) -> Option<[f32; 3]> {
     let dir: Vec3 = *ray.direction;
     if dir.y.abs() < 1e-4 {
@@ -761,7 +1415,6 @@ fn ground_hit(ray: Ray3d) -> Option<[f32; 3]> {
     Some([point.x, 0.0, point.z])
 }
 
-/// The object nearest to the ray, within a generous radius.
 fn pick(doc: &MapDoc, ray: Ray3d) -> Option<usize> {
     let dir: Vec3 = *ray.direction;
     let mut best: Option<(usize, f32)> = None;
@@ -786,7 +1439,82 @@ fn pick(doc: &MapDoc, ray: Ray3d) -> Option<usize> {
 }
 
 // ---------------------------------------------------------------------------
-// Preview
+// Text input
+// ---------------------------------------------------------------------------
+
+fn text_input(mut events: MessageReader<KeyboardInput>, mut editor: ResMut<Editor>) {
+    let Some(field) = editor.input.field else {
+        events.clear();
+        return;
+    };
+    for event in events.read() {
+        if !event.state.is_pressed() {
+            continue;
+        }
+        match event.key_code {
+            KeyCode::Enter => {
+                let buffer = std::mem::take(&mut editor.input.buffer);
+                editor.input.field = None;
+                apply_text(&mut editor, field, buffer);
+                editor.ui_dirty = true;
+            }
+            KeyCode::Escape => {
+                editor.input.field = None;
+                editor.input.buffer.clear();
+                editor.status = "Cancelled.".to_string();
+                editor.ui_dirty = true;
+            }
+            KeyCode::Backspace => {
+                editor.input.buffer.pop();
+                editor.ui_dirty = true;
+            }
+            _ => {
+                if let Some(text) = &event.text {
+                    for ch in text.chars() {
+                        if ch.is_ascii_alphanumeric() || "-_/. ".contains(ch) {
+                            editor.input.buffer.push(ch);
+                        }
+                    }
+                    editor.ui_dirty = true;
+                }
+            }
+        }
+    }
+}
+
+fn apply_text(editor: &mut Editor, field: Focus, value: String) {
+    let value = value.trim().to_string();
+    match field {
+        Focus::MapName => {
+            if !value.is_empty() {
+                editor.doc.name = value;
+                editor.dirty = true;
+                editor.status = "Renamed map.".to_string();
+            }
+        }
+        Focus::PlaneName => {
+            if let Some(plane) = editor.planes.get_mut(editor.plane_selected) {
+                if !value.is_empty() {
+                    plane.name = value;
+                    save_plane(editor);
+                }
+            }
+        }
+        Focus::DialogName => {
+            if let Some(dialog) = editor.dialog.as_mut() {
+                dialog.name = value;
+            }
+        }
+        Focus::DialogModel => {
+            if let Some(dialog) = editor.dialog.as_mut() {
+                dialog.model = value;
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Preview, status, test server
 // ---------------------------------------------------------------------------
 
 fn rebuild_preview(
@@ -816,7 +1544,6 @@ fn rebuild_preview(
         });
         let mesh = match object.kind {
             ObjectKind::Hill => meshes.add(Sphere::new(0.5).mesh().ico(3).unwrap()),
-            ObjectKind::Model => meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
             _ => meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         };
         commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), transform, Preview));
@@ -841,102 +1568,23 @@ fn rebuild_preview(
     }
 }
 
-// ---------------------------------------------------------------------------
-// HUD
-// ---------------------------------------------------------------------------
-
-fn update_hud(editor: Res<Editor>, mut hud: Query<&mut Text, With<EditorHud>>) {
-    let Ok(mut text) = hud.single_mut() else {
-        return;
-    };
-    let selected = match editor
-        .selected
-        .and_then(|index| editor.doc.objects.get(index))
-    {
-        Some(object) => format!(
-            "#{} {}  pos [{:.0}, {:.0}, {:.0}]  yaw {:.0}  scale [{:.0}, {:.0}, {:.0}]",
-            editor.selected.unwrap(),
-            object.kind.label(),
-            object.position[0],
-            object.position[1],
-            object.position[2],
-            object.yaw,
-            object.scale[0],
-            object.scale[1],
-            object.scale[2],
-        ),
-        None => "none".to_string(),
-    };
-
-    let body = if let Some(field) = editor.input.field {
-        format!(
-            "TYPE ({}): {}_\nEnter confirm, Esc cancel",
-            field_label(field),
-            editor.input.buffer
-        )
-    } else if editor.mode == Mode::Planes {
-        let mut lines = vec!["PLANES  (F1 back to the map)".to_string()];
-        for (index, plane) in editor.planes.iter().enumerate() {
-            let marker = if index == editor.plane_selected {
-                ">"
-            } else {
-                " "
-            };
-            lines.push(format!(
-                "{marker} {:<22} model: {}",
-                plane.name,
-                plane.model.as_deref().unwrap_or("(procedural)")
-            ));
-        }
-        lines.push(String::new());
-        lines.push("N new   R rename   M set model   Del delete   Ctrl+S save".to_string());
-        lines.join("\n")
-    } else {
-        format!(
-            "MAP '{name}'  ({id})   gamemode {gm}   objects {objects}  spawns {spawns}\n\
-             Placing: {place}   Spawn team: {team}   Selected: {selected}\n\
-             \n\
-             Look: mouse   Move: WASD  Q/E  Shift-fast\n\
-             LMB place   RMB select   Tab cycle   1-8 pick kind   B add spawn   T team\n\
-             Arrows move   PgUp/PgDn height   [ ] yaw   - = scale   Del delete\n\
-             Ctrl+N new   Ctrl+O reload   Ctrl+S save   F5 test server   F2 planes   Ctrl+Q quit",
-            name = editor.doc.name,
-            id = editor.doc.id,
-            gm = editor.doc.gamemode,
-            objects = editor.doc.objects.len(),
-            spawns = editor.doc.spawns.len(),
-            place = editor.place.label(),
-            team = editor.spawn_team,
-            selected = selected,
-        )
-    };
-
-    **text = format!("{body}\n\n{status}", status = editor.status);
-}
-
-fn field_label(field: Field) -> &'static str {
-    match field {
-        Field::NewMap => "new map name",
-        Field::Rename => "map name",
-        Field::NewPlane => "new plane name",
-        Field::PlaneName => "plane name",
-        Field::Model => "glTF/GLB path",
+fn update_status(
+    editor: Res<Editor>,
+    mut title: Query<&mut Text, (With<ToolbarTitle>, Without<StatusText>)>,
+    mut status: Query<&mut Text, (With<StatusText>, Without<ToolbarTitle>)>,
+) {
+    if let Ok(mut text) = title.single_mut() {
+        let mode = match editor.mode {
+            Mode::Map => "Map",
+            Mode::Planes => "Planes",
+        };
+        **text = format!("map: {}  [{mode}]", editor.doc.name);
+    }
+    if let Ok(mut text) = status.single_mut() {
+        **text = editor.status.clone();
     }
 }
 
-// ---------------------------------------------------------------------------
-// Cursor & test server
-// ---------------------------------------------------------------------------
-
-fn manage_cursor(mut cursors: Query<&mut CursorOptions, With<PrimaryWindow>>) {
-    let Ok(mut cursor) = cursors.single_mut() else {
-        return;
-    };
-    cursor.visible = false;
-    cursor.grab_mode = CursorGrabMode::Locked;
-}
-
-/// Start or stop the dedicated test server for the current map.
 fn toggle_server(editor: &mut Editor) {
     if let Some(mut child) = editor.server.take() {
         let _ = child.kill();
@@ -946,13 +1594,11 @@ fn toggle_server(editor: &mut Editor) {
     save_map(editor);
     let map_id = editor.doc.id.clone();
 
-    // Prefer a built server binary; otherwise fall back to `cargo run`.
     let mut command = if let Some(binary) = server_binary(&editor.server_dir) {
         Command::new(binary)
     } else {
         let mut command = Command::new("cargo");
-        command.arg("run").arg("--").arg("--map").arg(&map_id);
-        command.current_dir(&editor.server_dir);
+        command.arg("run").arg("--");
         command
     };
     if !command.get_args().any(|arg| arg == "--map") {
@@ -962,7 +1608,7 @@ fn toggle_server(editor: &mut Editor) {
     match command.spawn() {
         Ok(child) => {
             editor.server = Some(child);
-            editor.status = format!("Test server started on map '{map_id}' (bind 0.0.0.0:7777).");
+            editor.status = format!("Test server started on '{map_id}' (0.0.0.0:7777).");
         }
         Err(err) => editor.status = format!("Could not start the server: {err}"),
     }

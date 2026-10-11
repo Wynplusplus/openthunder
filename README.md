@@ -74,36 +74,49 @@ also override things on the command line, e.g.
 ## Mission editor
 
 `cargo run --bin editor` (or **Mission editor** in the launcher) opens a Bevy 3D
-editor for building the maps/missions the dedicated server hosts, creating
-planes, and launching a local test server.
+editor with a **Godot-style, mouse-driven UI** for building the maps/missions the
+dedicated server hosts, creating planes, and launching a local test server.
 
 It reads and writes the **server's** `maps/` and `planes/` directories. It looks
 for `../openthunder_server` by default; override with `OPENTHUNDER_SERVER_DIR`.
 
-**Camera:** mouse to look, `WASD` to fly, `Q`/`E` down/up, `Shift` to go faster.
+```text
++---------------------------------------------------------------+
+| toolbar: New Save Reload | Map Planes | Play/Stop | map name   |
++-----------+---------------------------------------+-----------+
+| palette   |                                       | inspector |
+| scene tree|            3D viewport                |  (props)  |
++-----------+---------------------------------------+-----------+
+| status bar                                                     |
++---------------------------------------------------------------+
+```
 
-**Building a map:**
+**Map tab — build the world:**
 
-| Input | Action |
-| --- | --- |
-| `1`–`8` | Pick the kind to place (building, tree, tank, fuel tank, hill, runway, objective, 3D model) |
-| Left mouse | Place the current kind on the ground under the crosshair |
-| Right mouse | Select the object under the crosshair |
-| `Tab` | Cycle the selection |
-| Arrows / `PgUp` `PgDn` | Move the selected object (X/Z, then height) |
-| `[` `]` | Rotate it · `-` `=` scale it · `Del` delete it |
-| `B` | Add a spawn point · `T` switch team |
-| `R` | Rename the map · `Ctrl+N` new map · `Ctrl+O` reload · `Ctrl+S` save |
-| `F5` | Start / stop a local test server on this map |
+- **Add object** (left dock): click a kind in the palette, then **left-click the
+  viewport** to place it on the ground under the cursor. The active kind is
+  highlighted.
+- **Scene** (left dock): click a row to select an object; **middle-click** an
+  object in the viewport does the same.
+- **Inspector** (right dock): edit the selected object with `−`/`+` steppers —
+  position X/Y/Z, yaw, scale X/Y/Z and colour R/G/B. **Kind** cycles the type;
+  **Delete** removes it.
+- **Spawn points**: *Add spawn* / *Switch team* / *Clear spawns*.
+- Toolbar: **New**, **Save**, **Reload**, and click the **map name** to rename.
 
-**Planes (`F2`):** `N` creates a plane, `R` renames it, `M` sets a glTF/GLB
-`model` path (relative to the client's `assets/`), `Del` deletes it, `Ctrl+S`
-saves. A plane with a `model` renders that mesh in-game instead of the
-procedural one.
+**Planes tab — click *Planes* in the toolbar:** lists the server's planes. **New
+plane…** opens a dialog (name + glTF/GLB model path); **Set model…**, **Rename**
+and **Delete** act on the selected plane. A plane with a `model` renders that
+mesh in-game instead of the procedural one.
+
+**Camera:** hold the **right mouse button** to look, `WASD` to fly, `Q`/`E`
+down/up, `Shift` for a speed boost, and the mouse wheel to move forward/back.
+
+**Play / Stop test server** saves the map and runs the dedicated server with it.
 
 Maps are saved as the server's `maps/<id>.map` format (see the server README),
 and the server ships the whole file to clients, so a map's terrain, spawn points
-and objects appear in-game. `F5` saves and runs the dedicated server with it.
+and objects appear in-game.
 
 ---
 
