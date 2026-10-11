@@ -244,6 +244,7 @@ fn receive_snapshots(
     mut spotting: ResMut<crate::spotting::Spotting>,
     mut match_state: ResMut<crate::match_client::MatchClient>,
     mut registry: ResMut<AircraftRegistry>,
+    mut map_source: ResMut<crate::world::MapSource>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut remote: Query<(Entity, &mut RemotePlayer, &mut DamageModel), Without<PlayerControlled>>,
@@ -337,6 +338,10 @@ fn receive_snapshots(
                     spotting.detection_range,
                     spotting.awareness_range
                 );
+            }
+            Ok(ServerMessage::Map { text }) => {
+                info!("[net] received map ({} bytes) from server", text.len());
+                map_source.text = text;
             }
             Ok(ServerMessage::Welcome { team, .. }) => {
                 match_state.team = team;

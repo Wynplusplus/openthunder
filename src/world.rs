@@ -1,10 +1,14 @@
 //! The map: ground/water, a runway, scattered landmarks, and the sun.
 //!
-//! Two variants are generated, chosen by the server's map name: the flat
-//! **Training** field, and the **Pacific Islands** chain used by team
-//! deathmatch. The world is rebuilt when the map changes (i.e. on connect).
+//! A server can ship a full **map document** (see [`crate::map_doc`]) which the
+//! client builds here: terrain plus every placed object. When no map document
+//! arrives (single-player, or a rules-only map) the client falls back to the
+//! built-in procedural **Training** and **Pacific Islands** terrains, chosen by
+//! the server's map name.
 
 use bevy::prelude::*;
+
+use openthunder::map_doc::{MapDoc, MapObject, ObjectKind};
 
 use crate::net::{ConnectionStatus, NetClient};
 
@@ -13,9 +17,26 @@ pub struct WorldPlugin;
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<WorldKind>()
+            .init_resource::<MapSource>()
+            .init_resource::<BuiltWorld>()
             .add_systems(Startup, setup_world)
             .add_systems(Update, switch_world);
     }
+}
+
+/// The raw map text the server sent (empty until one arrives). Filled in by
+/// `net.rs` when the `MAP` message arrives.
+#[derive(Resource, Default)]
+pub struct MapSource {
+    pub text: String,
+}
+
+/// What is currently built, so the world is only rebuilt when it changes.
+#[derive(Resource, Default)]
+struct BuiltWorld {
+    /// The map text that was built (`""` = the legacy procedural terrain).
+    source: String,
+    kind: WorldKind,
 }
 
 /// Which terrain is currently built.
@@ -92,31 +113,40 @@ fn setup_world(
     );
 }
 
-/// Rebuild the terrain when the server tells us we are on a different map.
+/// Rebuild the terrain when the server tells us we are on a different map, or
+/// when a full map document arrives.
 fn switch_world(
     mut commands: Commands,
     client: Res<NetClient>,
-    mut current: ResMut<WorldKind>,
+    source: Res<MapSource>,
+    mut built: ResMut<BuiltWorld>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     existing: Query<Entity, With<WorldEntity>>,
 ) {
-    let map = {
+    let name = {
         let status = client.status.lock().unwrap();
         match &*status {
             ConnectionStatus::Connected { map, .. } => map.clone(),
             _ => return,
         }
     };
-    let wanted = WorldKind::for_map(&map);
-    if *current == wanted {
+    let text = source.text.clone();
+    let kind = WorldKind::for_map(&name);
+    if built.source == text && built.kind == kind {
         return;
     }
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    *current = wanted;
-    build_world(&mut commands, &mut meshes, &mut materials, wanted);
+    built.source = text.clone();
+    built.kind = kind;
+    if text.trim().is_empty() {
+        build_world(&mut commands, &mut meshes, &mut materials, kind);
+    } else {
+        let doc = MapDoc::parse(&name, &text);
+        build_map(&mut commands, &mut meshes, &mut materials, &doc);
+    }
 }
 
 /// A tiny deterministic PRNG so a map looks the same every run.
@@ -315,4 +345,88 @@ fn build_islands(
             ));
         }
     }
+}
+
+/// Build a world from a mission-editor map document: terrain, then every object.
+fn build_map(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    doc: &MapDoc,
+) {
+    let size = doc.terrain.size.max(1_000.0);
+    let ground = materials.add(StandardMaterial {
+        base_color: srgb(doc.terrain.ground_color),
+        perceptual_roughness: 1.0,
+        ..default()
+    });
+    commands.spawn((
+        Mesh3d(meshes.add(Plane3d::default().mesh().size(size * 2.0, size * 2.0))),
+        MeshMaterial3d(ground),
+        WorldEntity,
+    ));
+
+    if doc.terrain.water {
+        let water = materials.add(StandardMaterial {
+            base_color: srgb(doc.terrain.water_color),
+            perceptual_roughness: 0.4,
+            metallic: 0.1,
+            ..default()
+        });
+        commands.spawn((
+            Mesh3d(meshes.add(Plane3d::default().mesh().size(size * 3.0, size * 3.0))),
+            MeshMaterial3d(water),
+            Transform::from_xyz(0.0, -1.0, 0.0),
+            WorldEntity,
+        ));
+    }
+
+    for object in &doc.objects {
+        spawn_object(commands, meshes, materials, object);
+    }
+}
+
+/// Spawn one placed object. Primitives are unit meshes scaled by the object;
+/// [`ObjectKind::Model`] loads the object's glTF/GLB file.
+fn spawn_object(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    object: &MapObject,
+) {
+    let transform = Transform::from_xyz(object.position[0], object.position[1], object.position[2])
+        .with_rotation(Quat::from_rotation_y(object.yaw.to_radians()))
+        .with_scale(Vec3::from(object.scale));
+
+    if object.kind == ObjectKind::Model {
+        let entity = commands
+            .spawn((transform, Visibility::default(), WorldEntity))
+            .id();
+        if let Some(path) = object.model.as_deref() {
+            crate::models::queue_model(commands, entity, path);
+        }
+        return;
+    }
+
+    let material = materials.add(StandardMaterial {
+        base_color: srgb(object.color),
+        perceptual_roughness: 0.9,
+        ..default()
+    });
+    let mesh = match object.kind {
+        // A flattened sphere makes a passable hill.
+        ObjectKind::Hill => meshes.add(Sphere::new(0.5).mesh().ico(3).unwrap()),
+        _ => meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
+    };
+    commands.spawn((
+        Mesh3d(mesh),
+        MeshMaterial3d(material),
+        transform,
+        WorldEntity,
+    ));
+}
+
+/// An sRGB colour from linear-ish editor components.
+fn srgb(color: [f32; 3]) -> Color {
+    Color::srgb(color[0], color[1], color[2])
 }

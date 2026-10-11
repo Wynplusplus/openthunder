@@ -139,6 +139,8 @@ pub struct AircraftSpec {
     pub wing_chord: f32,
     /// Tailplane span (m).
     pub tail_span: f32,
+    /// Optional glTF/GLB model that replaces the procedural mesh.
+    pub model: Option<String>,
 }
 
 /// Registry of every aircraft type the game knows about.
@@ -396,6 +398,7 @@ impl AircraftSpec {
             length: config.length,
             wing_chord: config.wing_chord,
             tail_span: config.tail_span,
+            model: config.model.clone(),
         }
     }
 }
@@ -411,7 +414,10 @@ impl Plugin for AircraftPlugin {
             .collect();
         app.insert_resource(AircraftRegistry { specs })
             .add_systems(Startup, log_aircraft_types)
-            .add_systems(Update, (spin_propellers, update_gear_visual));
+            .add_systems(
+                Update,
+                (spin_propellers, update_gear_visual, queue_aircraft_models),
+            );
     }
 }
 
@@ -456,6 +462,12 @@ pub fn spawn_aircraft_model(
     spec: &AircraftSpec,
     root: Entity,
 ) {
+    // A custom glTF model replaces the procedural mesh (queued by
+    // `queue_aircraft_models`).
+    if spec.model.is_some() {
+        return;
+    }
+
     // Shared materials.
     let body = materials.add(StandardMaterial {
         base_color: spec.body_color,
@@ -582,6 +594,18 @@ fn update_gear_visual(
         };
         // Slide the legs up into the fuselage as they retract.
         transform.translation.y = 1.2 * (1.0 - position);
+    }
+}
+
+/// Queue a plane's custom glTF model the first time we see its entity.
+fn queue_aircraft_models(
+    mut commands: Commands,
+    aircraft: Query<(Entity, &Aircraft), Added<Aircraft>>,
+) {
+    for (entity, aircraft) in &aircraft {
+        if let Some(model) = &aircraft.spec.model {
+            crate::models::queue_model(&mut commands, entity, model);
+        }
     }
 }
 

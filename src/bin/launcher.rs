@@ -210,6 +210,7 @@ fn menu_lines(
         "Select aircraft".to_string(),
         format!("Server: {server}"),
         format!("Display: {display}  (Enter to switch)"),
+        "Mission editor".to_string(),
         "Edit keybinds".to_string(),
         "Reset keybinds to defaults".to_string(),
         "Quit".to_string(),
@@ -410,6 +411,44 @@ fn launch_game(terminal: &mut Terminal, keybinds: &Keybinds, plane: &str, server
     terminal.enter_alt();
 }
 
+/// The mission-editor binary (prefer the built one next to the launcher).
+fn editor_command() -> Command {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let candidate = dir.join(format!("editor{}", std::env::consts::EXE_SUFFIX));
+            if candidate.exists() {
+                return Command::new(candidate);
+            }
+        }
+    }
+    let mut command = Command::new("cargo");
+    command.args(["run", "--bin", "editor"]);
+    command
+}
+
+fn launch_editor(terminal: &mut Terminal) {
+    terminal.disable_raw();
+    terminal.leave_alt();
+    println!(
+        "Launching the OpenThunder mission editor... (close the editor window to return here)"
+    );
+    let _ = io::stdout().flush();
+
+    match editor_command().status() {
+        Ok(status) if status.success() => {}
+        Ok(status) => println!("Editor exited with {status}."),
+        Err(err) => eprintln!("Failed to launch the editor: {err}"),
+    }
+
+    println!("Press Enter to return to the launcher...");
+    let _ = io::stdout().flush();
+    let mut line = String::new();
+    let _ = io::stdin().read_line(&mut line);
+
+    let _ = terminal.enable_raw();
+    terminal.enter_alt();
+}
+
 // ---------------------------------------------------------------------------
 // Main loop
 // ---------------------------------------------------------------------------
@@ -482,7 +521,7 @@ fn run() -> io::Result<()> {
         match screen {
             Screen::Menu => match key {
                 Key::Up => menu_selected = menu_selected.saturating_sub(1),
-                Key::Down => menu_selected = (menu_selected + 1).min(6),
+                Key::Down => menu_selected = (menu_selected + 1).min(7),
                 Key::Char('q') | Key::Char('Q') => break,
                 Key::Enter => match menu_selected {
                     0 => {
@@ -518,10 +557,14 @@ fn run() -> io::Result<()> {
                         );
                     }
                     4 => {
+                        launch_editor(&mut terminal);
+                        status.clear();
+                    }
+                    5 => {
                         screen = Screen::Keybinds;
                         status = "Changes are saved automatically.".to_string();
                     }
-                    5 => {
+                    6 => {
                         keybinds = Keybinds::default();
                         let _ = keybinds.save();
                         status = "Reset all keybinds to defaults.".to_string();

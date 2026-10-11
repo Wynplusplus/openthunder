@@ -14,6 +14,7 @@ mod flight;
 mod hud;
 mod match_client;
 mod menu;
+mod models;
 mod net;
 mod pilot;
 mod spawn_menu;
@@ -69,5 +70,6 @@ fn main() {
             spotting::SpottingPlugin,
             targets::TargetsPlugin,
         ))
+        .add_plugins(models::ModelsPlugin)
         .run();
 }

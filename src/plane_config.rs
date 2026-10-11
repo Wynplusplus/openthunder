@@ -86,11 +86,13 @@ pub struct PlaneConfig {
     pub flap_speed_limits: [f32; 3],
     pub max_health: f32,
 
-    // --- Model (procedural; a mesh path could be added later) ---
+    // --- Model (procedural; `model` overrides it with a glTF/GLB file) ---
     pub body_color: [f32; 3],
     pub length: f32,
     pub wing_chord: f32,
     pub tail_span: f32,
+    /// Optional glTF/GLB model (an asset path) that replaces the procedural mesh.
+    pub model: Option<String>,
 
     // --- Armament ---
     pub guns: Vec<GunConfig>,
@@ -141,6 +143,7 @@ impl Default for PlaneConfig {
             length: 9.5,
             wing_chord: 2.0,
             tail_span: 3.4,
+            model: None,
             guns: vec![GunConfig::default()],
         }
     }
@@ -309,6 +312,7 @@ impl PlaneConfig {
                 "length" => plane.length = parse_f32(value).unwrap_or(plane.length),
                 "wing_chord" => plane.wing_chord = parse_f32(value).unwrap_or(plane.wing_chord),
                 "tail_span" => plane.tail_span = parse_f32(value).unwrap_or(plane.tail_span),
+                "model" => plane.model = Some(value.to_string()),
                 _ => {}
             }
         }
@@ -368,6 +372,9 @@ impl PlaneConfig {
         let _ = writeln!(out, "length = {}", self.length);
         let _ = writeln!(out, "wing_chord = {}", self.wing_chord);
         let _ = writeln!(out, "tail_span = {}", self.tail_span);
+        if let Some(model) = &self.model {
+            let _ = writeln!(out, "model = {model}");
+        }
         let _ = writeln!(
             out,
             "body_color = {} {} {}",
@@ -437,6 +444,7 @@ pub fn default_planes() -> Vec<PlaneConfig> {
             length: 10.3,
             wing_chord: 2.0,
             tail_span: 3.4,
+            model: None,
             guns: vec![GunConfig {
                 name: "M2 Browning".to_string(),
                 caliber_mm: 12.7,
@@ -499,6 +507,7 @@ pub fn default_planes() -> Vec<PlaneConfig> {
             length: 9.2,
             wing_chord: 2.0,
             tail_span: 3.4,
+            model: None,
             guns: vec![
                 GunConfig {
                     name: "MG 151/20".to_string(),
@@ -566,6 +575,7 @@ pub fn default_planes() -> Vec<PlaneConfig> {
             length: 9.1,
             wing_chord: 2.0,
             tail_span: 3.4,
+            model: None,
             guns: vec![GunConfig {
                 name: "Hispano Mk II".to_string(),
                 caliber_mm: 20.0,
@@ -633,5 +643,14 @@ muzzle = -1 2 3
         let plane = PlaneConfig::parse("blank", "name = Blank\n");
         assert_eq!(plane.name, "Blank");
         assert_eq!(plane.mass, PlaneConfig::default().mass);
+    }
+
+    #[test]
+    fn parses_and_serializes_a_model_path() {
+        let text = "name = Custom\nmodel = models/fighter.glb\n";
+        let plane = PlaneConfig::parse("custom", text);
+        assert_eq!(plane.model.as_deref(), Some("models/fighter.glb"));
+        let again = PlaneConfig::parse("custom", &plane.to_config_string());
+        assert_eq!(again.model, plane.model);
     }
 }

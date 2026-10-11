@@ -30,6 +30,7 @@ cd openthunder
 cargo run                 # the game (debug; deps are optimized, see Cargo.toml)
 cargo run --release       # the game, optimized
 cargo run --bin launcher  # the TUI launcher
+cargo run --bin editor    # the 3D mission editor
 ```
 
 > **Linux note:** the default Bevy gamepad backend (`gilrs`) needs the `libudev`
@@ -50,6 +51,7 @@ escapes, no extra TUI dependency) where you can:
   Spitfire F Mk IXc.
 - **Server** — single-player, or one of the servers in `servers.conf`.
 - **Display** — switch between **Fullscreen** (default) and Windowed.
+- **Mission editor** — opens the 3D map/plane editor (see below).
 - **Edit keybinds** — pick an action, press a new key, and it is saved instantly.
 - **Reset keybinds to defaults**.
 
@@ -69,6 +71,42 @@ also override things on the command line, e.g.
 
 ---
 
+## Mission editor
+
+`cargo run --bin editor` (or **Mission editor** in the launcher) opens a Bevy 3D
+editor for building the maps/missions the dedicated server hosts, creating
+planes, and launching a local test server.
+
+It reads and writes the **server's** `maps/` and `planes/` directories. It looks
+for `../openthunder_server` by default; override with `OPENTHUNDER_SERVER_DIR`.
+
+**Camera:** mouse to look, `WASD` to fly, `Q`/`E` down/up, `Shift` to go faster.
+
+**Building a map:**
+
+| Input | Action |
+| --- | --- |
+| `1`–`8` | Pick the kind to place (building, tree, tank, fuel tank, hill, runway, objective, 3D model) |
+| Left mouse | Place the current kind on the ground under the crosshair |
+| Right mouse | Select the object under the crosshair |
+| `Tab` | Cycle the selection |
+| Arrows / `PgUp` `PgDn` | Move the selected object (X/Z, then height) |
+| `[` `]` | Rotate it · `-` `=` scale it · `Del` delete it |
+| `B` | Add a spawn point · `T` switch team |
+| `R` | Rename the map · `Ctrl+N` new map · `Ctrl+O` reload · `Ctrl+S` save |
+| `F5` | Start / stop a local test server on this map |
+
+**Planes (`F2`):** `N` creates a plane, `R` renames it, `M` sets a glTF/GLB
+`model` path (relative to the client's `assets/`), `Del` deletes it, `Ctrl+S`
+saves. A plane with a `model` renders that mesh in-game instead of the
+procedural one.
+
+Maps are saved as the server's `maps/<id>.map` format (see the server README),
+and the server ships the whole file to clients, so a map's terrain, spawn points
+and objects appear in-game. `F5` saves and runs the dedicated server with it.
+
+---
+
 ## Multiplayer
 
 OpenThunder can join a dedicated server (a separate repo,
@@ -84,6 +122,9 @@ streams its own aircraft state and renders everyone else.
 
 Maps and gamemodes live on the **server**: a map file picks a gamemode and
 configures its rules, so both are easy to extend. See the server repo's README.
+The server ships the whole map file to clients on connect (the `MAP` message), so
+a map's terrain, spawn points and objects are built in-game — make them with the
+[mission editor](#mission-editor).
 
 ### Team Deathmatch
 
@@ -95,8 +136,8 @@ scores, round timer) at the bottom of the screen, a **kill feed** top-right, and
 **respawns you automatically** a few seconds after you are shot down.
 
 The `pacific_islands.map` map runs it over an island chain: the client builds
-matching island terrain (water, beaches, runways, trees) from the server's map
-name, and switches to it when you connect.
+matching island terrain (water, beaches, runways, trees) and switches to it when
+you connect.
 
 ### Spotting
 
@@ -387,7 +428,9 @@ A plane is **data**. The built-in planes are defined in
   lives in `src/planes.rs`; a unit test keeps the two in sync.
 
 The visual model is generated from the plane's model parameters (length, wing
-chord, tail span, colour), so there is no per-plane rendering code to write.
+chord, tail span, colour), so there is no per-plane rendering code to write. A
+`model = <path>` line instead loads a glTF/GLB from the client's `assets/`
+(the mission editor sets this).
 
 ## Project layout
 
@@ -398,15 +441,18 @@ src/
   keybinds.rs        keybind config: defaults, load/save, supported keys
   planes.rs          the list of aircraft offered by the launcher
   plane_config.rs    plane definitions (flight model + model + guns)
+  map_doc.rs         map documents (terrain, spawns, objects) — editor/server format
   servers.rs         the server list shown by the launcher
   settings.rs        player settings (aircraft, server, display, name)
   protocol.rs        wire protocol (shared verbatim with the server repo)
   bin/launcher.rs    the TUI launcher (raw ANSI + libc termios)
+  bin/editor.rs      the 3D mission editor
   aircraft.rs        AircraftSpec (built from plane configs), registry, spawning
   flight.rs          keybind resource, controls (mouse instructor + keyboard), flight model
+  models.rs          glTF/GLB loading for planes and map objects
   net.rs             multiplayer client (background threads + remote aircraft)
   camera.rs          third-person chase camera + distance fog
-  world.rs           ground, runway, scattered landmarks, sun
+  world.rs           terrain + map objects, sun
   damage.rs          per-section damage model + debug damage keys
   hud.rs             telemetry + control-input overlay
   menu.rs            in-game menu (Esc); the world keeps running while open

@@ -12,7 +12,7 @@
 #![allow(dead_code)]
 
 /// Bump this whenever the message formats change.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// Team index meaning "no team" (free flight and other unteamed modes).
 pub const NO_TEAM: u8 = 255;
@@ -79,6 +79,10 @@ pub enum ServerMessage {
     /// (g-tolerance, blackout/redout, stamina). An empty string means "keep the
     /// client defaults".
     Crew { config: String },
+    /// The map's full text, so clients can build the world the server is running
+    /// (see `openthunder::map_doc`). Sent after [`ServerMessage::Crew`]. An empty
+    /// string means "rules-only map; use the built-in terrain".
+    Map { text: String },
     /// The full set of players, sent every tick.
     Snapshot { players: Vec<PlayerSnapshot> },
     /// A player disconnected.
@@ -304,6 +308,9 @@ impl ServerMessage {
             ServerMessage::Crew { config } => {
                 format!("CREW\t{}", escape_text(config))
             }
+            ServerMessage::Map { text } => {
+                format!("MAP\t{}", escape_text(text))
+            }
             ServerMessage::Snapshot { players } => {
                 let mut out = format!("SNAPSHOT\t{}", players.len());
                 for player in players {
@@ -399,6 +406,14 @@ impl ServerMessage {
                 }
                 Ok(ServerMessage::Crew {
                     config: unescape_text(fields[1]),
+                })
+            }
+            Some("MAP") => {
+                if fields.len() != 2 {
+                    return Err(ProtocolError("MAP wants 2 fields".into()));
+                }
+                Ok(ServerMessage::Map {
+                    text: unescape_text(fields[1]),
                 })
             }
             Some("SNAPSHOT") => {
@@ -590,6 +605,11 @@ mod tests {
         });
         round_trip_server(ServerMessage::Crew {
             config: "g_tolerance = 5.0\nnegative_g_tolerance = -2.5\n".into(),
+        });
+        round_trip_server(ServerMessage::Map {
+            text:
+                "name = Custom\ngamemode = free_flight\n\n[object]\nkind = tree\nposition = 1 2 3\n"
+                    .into(),
         });
     }
 
