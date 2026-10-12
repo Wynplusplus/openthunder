@@ -108,7 +108,11 @@ for `../openthunder_server` by default; override with `OPENTHUNDER_SERVER_DIR`.
   **radius** and **strength** steppers tune the brush, and **Water** + the
   **water-level** stepper flood everything below the level. *Remove heightmap*
   goes back to flat ground.
-- Toolbar: **New**, **Save**, **Reload**, and click the **map name** to rename.
+- Toolbar: **New**, **Save**, **Reload**, **Undo**, **Redo**, and click the
+  **map name** to rename.
+- **Undo / redo**: `Ctrl+Z` and `Ctrl+Shift+Z` (or `Ctrl+Y`), or the toolbar
+  buttons. Every edit — placing objects, sculpting terrain, changing planes — is
+  undoable (64 steps).
 
 **Planes tab — click *Planes* in the toolbar:** manages the **mission's plane
 list**. The mission file carries each plane's full config *and* its glTF/GLB

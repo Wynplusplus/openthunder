@@ -71,6 +71,7 @@ fn main() {
                 camera_control,
                 viewport_input.after(handle_buttons),
                 text_input,
+                shortcuts,
                 rebuild_preview,
                 update_status,
                 poll_server,
@@ -191,7 +192,13 @@ struct Editor {
     terrain_tool: Option<TerrainTool>,
     brush_radius: f32,
     brush_strength: f32,
+    /// Undo / redo snapshots of the document.
+    undo: Vec<MapDoc>,
+    redo: Vec<MapDoc>,
 }
+
+/// How many undo steps to keep.
+const HISTORY_LIMIT: usize = 64;
 
 impl Editor {
     fn new() -> Self {
@@ -215,6 +222,8 @@ impl Editor {
             terrain_tool: None,
             brush_radius: 400.0,
             brush_strength: 40.0,
+            undo: Vec::new(),
+            redo: Vec::new(),
         }
     }
 
@@ -289,6 +298,8 @@ enum Action {
     NewMap,
     SaveMap,
     ReloadMap,
+    Undo,
+    Redo,
     SetMode(Mode),
     ToggleServer,
     FocusMapName,
@@ -317,6 +328,31 @@ enum Action {
     DialogConfirm,
     DialogCancel,
     Quit,
+}
+
+impl Action {
+    /// Whether this action changes the document, so it should be undoable.
+    /// (`Rename`/`Focus` actions only open an input; the change lands later in
+    /// `apply_text`.)
+    fn mutates(&self) -> bool {
+        matches!(
+            self,
+            Action::NewMap
+                | Action::ReloadMap
+                | Action::DeleteObject
+                | Action::CycleKind
+                | Action::Nudge(..)
+                | Action::AddSpawn
+                | Action::ClearSpawns
+                | Action::AddHeightmap
+                | Action::RemoveHeightmap
+                | Action::ToggleWater
+                | Action::WaterLevel(..)
+                | Action::AddBuiltinPlanes
+                | Action::DeletePlane
+                | Action::DialogConfirm
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -572,6 +608,8 @@ fn spawn_ui(mut commands: Commands) {
                 button(bar, "New", Action::NewMap, false);
                 button(bar, "Save", Action::SaveMap, false);
                 button(bar, "Reload", Action::ReloadMap, false);
+                button(bar, "Undo", Action::Undo, false);
+                button(bar, "Redo", Action::Redo, false);
                 spacer(bar, 12.0);
                 bar.spawn((
                     Text::new("  |  "),
@@ -833,6 +871,45 @@ fn button_visuals(
     }
 }
 
+/// Record the document before a change, so it can be undone.
+fn snapshot(editor: &mut Editor) {
+    editor.undo.push(editor.doc.clone());
+    if editor.undo.len() > HISTORY_LIMIT {
+        editor.undo.remove(0);
+    }
+    editor.redo.clear();
+}
+
+/// Undo the last change (`Ctrl+Z`).
+fn undo(editor: &mut Editor) {
+    match editor.undo.pop() {
+        Some(previous) => {
+            let current = std::mem::replace(&mut editor.doc, previous);
+            editor.redo.push(current);
+            editor.selected = None;
+            editor.dirty = true;
+            editor.ui_dirty = true;
+            editor.status = format!("Undo ({} left).", editor.undo.len());
+        }
+        None => editor.status = "Nothing to undo.".to_string(),
+    }
+}
+
+/// Redo the last undone change (`Ctrl+Shift+Z`).
+fn redo(editor: &mut Editor) {
+    match editor.redo.pop() {
+        Some(next) => {
+            let current = std::mem::replace(&mut editor.doc, next);
+            editor.undo.push(current);
+            editor.selected = None;
+            editor.dirty = true;
+            editor.ui_dirty = true;
+            editor.status = format!("Redo ({} left).", editor.redo.len());
+        }
+        None => editor.status = "Nothing to redo.".to_string(),
+    }
+}
+
 fn handle_buttons(
     interactions: Query<(&Interaction, &ActionBtn), (Changed<Interaction>, With<Button>)>,
     mut editor: ResMut<Editor>,
@@ -846,6 +923,9 @@ fn handle_buttons(
 }
 
 fn apply_action(editor: &mut Editor, action: Action) {
+    if action.mutates() {
+        snapshot(editor);
+    }
     match action {
         Action::NewMap => {
             editor.doc = MapDoc::new("untitled");
@@ -856,6 +936,8 @@ fn apply_action(editor: &mut Editor, action: Action) {
         }
         Action::SaveMap => save_map(editor),
         Action::ReloadMap => load_map(editor),
+        Action::Undo => undo(editor),
+        Action::Redo => redo(editor),
         Action::SetMode(mode) => {
             editor.mode = mode;
             editor.ui_dirty = true;
@@ -1606,14 +1688,19 @@ fn viewport_input(
 
     if editor.mode == Mode::Map {
         if let Some(tool) = editor.terrain_tool {
-            // Sculpting: apply the brush while the left button is held.
+            // Sculpting: apply the brush while the left button is held. One
+            // history entry per drag, not per frame.
             if mouse.pressed(MouseButton::Left) {
                 if let Some(point) = ground_hit(ray) {
+                    if mouse.just_pressed(MouseButton::Left) {
+                        snapshot(&mut editor);
+                    }
                     sculpt(&mut editor, tool, point[0], point[2]);
                 }
             }
         } else if mouse.just_pressed(MouseButton::Left) {
             if let Some(point) = ground_hit(ray) {
+                snapshot(&mut editor);
                 let mut object = MapObject::new(editor.place, point);
                 object.position[1] = object.scale[1] * 0.5;
                 editor.doc.objects.push(object);
@@ -1700,6 +1787,32 @@ fn pick(doc: &MapDoc, ray: Ray3d) -> Option<usize> {
 // Text input
 // ---------------------------------------------------------------------------
 
+/// Global keyboard shortcuts: undo (`Ctrl+Z`), redo (`Ctrl+Shift+Z` / `Ctrl+Y`)
+/// and save (`Ctrl+S`).
+fn shortcuts(keys: Res<ButtonInput<KeyCode>>, mut editor: ResMut<Editor>) {
+    if editor.input.field.is_some() {
+        return; // typing into a field
+    }
+    let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+    if !ctrl {
+        return;
+    }
+    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+    if keys.just_pressed(KeyCode::KeyZ) {
+        if shift {
+            redo(&mut editor);
+        } else {
+            undo(&mut editor);
+        }
+    }
+    if keys.just_pressed(KeyCode::KeyY) {
+        redo(&mut editor);
+    }
+    if keys.just_pressed(KeyCode::KeyS) {
+        save_map(&mut editor);
+    }
+}
+
 fn text_input(mut events: MessageReader<KeyboardInput>, mut editor: ResMut<Editor>) {
     let Some(field) = editor.input.field else {
         events.clear();
@@ -1744,7 +1857,8 @@ fn apply_text(editor: &mut Editor, field: Focus, value: String) {
     let value = value.trim().to_string();
     match field {
         Focus::MapName => {
-            if !value.is_empty() {
+            if !value.is_empty() && value != editor.doc.name {
+                snapshot(editor);
                 editor.doc.name = value;
                 editor.dirty = true;
                 editor.status = "Renamed map.".to_string();
@@ -1752,12 +1866,20 @@ fn apply_text(editor: &mut Editor, field: Focus, value: String) {
         }
         Focus::PlaneName => {
             if !value.is_empty() {
-                if let Some(plane) = editor.doc.planes.get_mut(editor.plane_selected) {
-                    let mut config = PlaneConfig::parse(&plane.id, &plane.config);
-                    config.name = value;
-                    plane.config = config.to_config_string();
-                    editor.dirty = true;
-                    editor.status = "Renamed plane.".to_string();
+                let name = editor
+                    .doc
+                    .planes
+                    .get(editor.plane_selected)
+                    .map(|plane| plane.display_name());
+                if name.as_deref() != Some(value.as_str()) {
+                    snapshot(editor);
+                    if let Some(plane) = editor.doc.planes.get_mut(editor.plane_selected) {
+                        let mut config = PlaneConfig::parse(&plane.id, &plane.config);
+                        config.name = value;
+                        plane.config = config.to_config_string();
+                        editor.dirty = true;
+                        editor.status = "Renamed plane.".to_string();
+                    }
                 }
             }
         }
@@ -2017,5 +2139,51 @@ fn poll_server(mut editor: ResMut<Editor>) {
             editor.server = None;
             editor.status = format!("Test server error: {err}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn undo_and_redo_restore_the_document() {
+        let mut editor = Editor::new();
+        let original = editor.doc.name.clone();
+
+        snapshot(&mut editor);
+        editor.doc.name = "Changed".to_string();
+
+        undo(&mut editor);
+        assert_eq!(editor.doc.name, original, "undo should restore the name");
+
+        redo(&mut editor);
+        assert_eq!(
+            editor.doc.name, "Changed",
+            "redo should re-apply the change"
+        );
+    }
+
+    #[test]
+    fn a_new_change_clears_the_redo_stack() {
+        let mut editor = Editor::new();
+        snapshot(&mut editor);
+        editor.doc.name = "One".to_string();
+        undo(&mut editor);
+        assert!(!editor.redo.is_empty());
+
+        // A fresh change invalidates the redo history.
+        snapshot(&mut editor);
+        editor.doc.name = "Two".to_string();
+        assert!(editor.redo.is_empty());
+    }
+
+    #[test]
+    fn undo_with_empty_history_is_a_no_op() {
+        let mut editor = Editor::new();
+        let before = editor.doc.clone();
+        undo(&mut editor);
+        assert_eq!(editor.doc, before);
+        assert_eq!(editor.status, "Nothing to undo.");
     }
 }
