@@ -12,4 +12,5 @@ pub mod planes;
 pub mod protocol;
 pub mod servers;
 pub mod settings;
+pub mod solid;
 pub mod terrain;

@@ -256,6 +256,16 @@ impl EmbeddedPlane {
         crate::plane_config::PlaneConfig::parse(&self.id, &self.config).name
     }
 
+    /// Parse the plane's full config.
+    pub fn config(&self) -> crate::plane_config::PlaneConfig {
+        crate::plane_config::PlaneConfig::parse(&self.id, &self.config)
+    }
+
+    /// Replace the config text from a parsed config.
+    pub fn set_config(&mut self, config: &crate::plane_config::PlaneConfig) {
+        self.config = config.to_config_string();
+    }
+
     /// Serialize as a standalone, self-contained plane file.
     pub fn to_file_string(&self) -> String {
         let mut out = String::new();

@@ -169,6 +169,267 @@ impl TerrainTool {
     }
 }
 
+/// A flight-model field the plane inspector can nudge.
+#[derive(Clone, Copy)]
+enum PlaneProp {
+    Mass,
+    WingArea,
+    WingSpan,
+    MaxPower,
+    StaticThrust,
+    PropEfficiency,
+    CriticalAltitude,
+    ClMax,
+    StallAoa,
+    Cd0,
+    Oswald,
+    PitchRate,
+    RollRate,
+    YawRate,
+    PitchStability,
+    YawStability,
+    ControlRefSpeed,
+    Responsiveness,
+    CruiseSpeed,
+    MaxIas,
+    GLimit,
+    PropTorque,
+    MaxHealth,
+    Length,
+    WingChord,
+    TailSpan,
+    ColorR,
+    ColorG,
+    ColorB,
+}
+
+impl PlaneProp {
+    const ALL: [PlaneProp; 29] = [
+        PlaneProp::Mass,
+        PlaneProp::WingArea,
+        PlaneProp::WingSpan,
+        PlaneProp::MaxPower,
+        PlaneProp::StaticThrust,
+        PlaneProp::PropEfficiency,
+        PlaneProp::CriticalAltitude,
+        PlaneProp::ClMax,
+        PlaneProp::StallAoa,
+        PlaneProp::Cd0,
+        PlaneProp::Oswald,
+        PlaneProp::PitchRate,
+        PlaneProp::RollRate,
+        PlaneProp::YawRate,
+        PlaneProp::PitchStability,
+        PlaneProp::YawStability,
+        PlaneProp::ControlRefSpeed,
+        PlaneProp::Responsiveness,
+        PlaneProp::CruiseSpeed,
+        PlaneProp::MaxIas,
+        PlaneProp::GLimit,
+        PlaneProp::PropTorque,
+        PlaneProp::MaxHealth,
+        PlaneProp::Length,
+        PlaneProp::WingChord,
+        PlaneProp::TailSpan,
+        PlaneProp::ColorR,
+        PlaneProp::ColorG,
+        PlaneProp::ColorB,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            PlaneProp::Mass => "Mass (kg)",
+            PlaneProp::WingArea => "Wing area (m²)",
+            PlaneProp::WingSpan => "Wing span (m)",
+            PlaneProp::MaxPower => "Engine power (W)",
+            PlaneProp::StaticThrust => "Static thrust (N)",
+            PlaneProp::PropEfficiency => "Prop efficiency",
+            PlaneProp::CriticalAltitude => "Critical altitude (m)",
+            PlaneProp::ClMax => "CL max",
+            PlaneProp::StallAoa => "Stall AoA (rad)",
+            PlaneProp::Cd0 => "Parasite drag",
+            PlaneProp::Oswald => "Oswald e",
+            PlaneProp::PitchRate => "Pitch rate",
+            PlaneProp::RollRate => "Roll rate",
+            PlaneProp::YawRate => "Yaw rate",
+            PlaneProp::PitchStability => "Pitch stability",
+            PlaneProp::YawStability => "Yaw stability",
+            PlaneProp::ControlRefSpeed => "Control ref speed",
+            PlaneProp::Responsiveness => "Responsiveness",
+            PlaneProp::CruiseSpeed => "Cruise speed (m/s)",
+            PlaneProp::MaxIas => "Max IAS (m/s)",
+            PlaneProp::GLimit => "G limit",
+            PlaneProp::PropTorque => "Prop torque",
+            PlaneProp::MaxHealth => "Max health",
+            PlaneProp::Length => "Fuselage length (m)",
+            PlaneProp::WingChord => "Wing chord (m)",
+            PlaneProp::TailSpan => "Tail span (m)",
+            PlaneProp::ColorR => "Body red",
+            PlaneProp::ColorG => "Body green",
+            PlaneProp::ColorB => "Body blue",
+        }
+    }
+
+    /// A sensible nudge for this field.
+    fn step(self) -> f32 {
+        match self {
+            PlaneProp::Mass => 100.0,
+            PlaneProp::MaxPower => 20_000.0,
+            PlaneProp::StaticThrust => 500.0,
+            PlaneProp::CriticalAltitude => 250.0,
+            PlaneProp::ColorR | PlaneProp::ColorG | PlaneProp::ColorB => 0.05,
+            PlaneProp::MaxIas | PlaneProp::CruiseSpeed => 5.0,
+            _ => 0.05,
+        }
+    }
+
+    fn get(self, plane: &PlaneConfig) -> f32 {
+        match self {
+            PlaneProp::Mass => plane.mass,
+            PlaneProp::WingArea => plane.wing_area,
+            PlaneProp::WingSpan => plane.wing_span,
+            PlaneProp::MaxPower => plane.max_power,
+            PlaneProp::StaticThrust => plane.static_thrust,
+            PlaneProp::PropEfficiency => plane.prop_efficiency,
+            PlaneProp::CriticalAltitude => plane.critical_altitude,
+            PlaneProp::ClMax => plane.cl_max,
+            PlaneProp::StallAoa => plane.stall_aoa,
+            PlaneProp::Cd0 => plane.cd0,
+            PlaneProp::Oswald => plane.oswald,
+            PlaneProp::PitchRate => plane.pitch_rate,
+            PlaneProp::RollRate => plane.roll_rate,
+            PlaneProp::YawRate => plane.yaw_rate,
+            PlaneProp::PitchStability => plane.pitch_stability,
+            PlaneProp::YawStability => plane.yaw_stability,
+            PlaneProp::ControlRefSpeed => plane.control_ref_speed,
+            PlaneProp::Responsiveness => plane.responsiveness,
+            PlaneProp::CruiseSpeed => plane.cruise_speed,
+            PlaneProp::MaxIas => plane.max_ias,
+            PlaneProp::GLimit => plane.g_limit,
+            PlaneProp::PropTorque => plane.prop_torque,
+            PlaneProp::MaxHealth => plane.max_health,
+            PlaneProp::Length => plane.length,
+            PlaneProp::WingChord => plane.wing_chord,
+            PlaneProp::TailSpan => plane.tail_span,
+            PlaneProp::ColorR => plane.body_color[0],
+            PlaneProp::ColorG => plane.body_color[1],
+            PlaneProp::ColorB => plane.body_color[2],
+        }
+    }
+
+    fn set(self, plane: &mut PlaneConfig, value: f32) {
+        match self {
+            PlaneProp::Mass => plane.mass = value.max(100.0),
+            PlaneProp::WingArea => plane.wing_area = value.max(1.0),
+            PlaneProp::WingSpan => plane.wing_span = value.max(1.0),
+            PlaneProp::MaxPower => plane.max_power = value.max(0.0),
+            PlaneProp::StaticThrust => plane.static_thrust = value.max(0.0),
+            PlaneProp::PropEfficiency => plane.prop_efficiency = value.clamp(0.1, 1.0),
+            PlaneProp::CriticalAltitude => plane.critical_altitude = value.max(0.0),
+            PlaneProp::ClMax => plane.cl_max = value.clamp(0.2, 3.0),
+            PlaneProp::StallAoa => plane.stall_aoa = value.clamp(0.05, 0.6),
+            PlaneProp::Cd0 => plane.cd0 = value.clamp(0.005, 0.2),
+            PlaneProp::Oswald => plane.oswald = value.clamp(0.4, 1.2),
+            PlaneProp::PitchRate => plane.pitch_rate = value.max(0.1),
+            PlaneProp::RollRate => plane.roll_rate = value.max(0.1),
+            PlaneProp::YawRate => plane.yaw_rate = value.max(0.05),
+            PlaneProp::PitchStability => plane.pitch_stability = value.max(0.0),
+            PlaneProp::YawStability => plane.yaw_stability = value.max(0.0),
+            PlaneProp::ControlRefSpeed => plane.control_ref_speed = value.max(10.0),
+            PlaneProp::Responsiveness => plane.responsiveness = value.max(0.5),
+            PlaneProp::CruiseSpeed => plane.cruise_speed = value.max(10.0),
+            PlaneProp::MaxIas => plane.max_ias = value.max(20.0),
+            PlaneProp::GLimit => plane.g_limit = value.clamp(2.0, 20.0),
+            PlaneProp::PropTorque => plane.prop_torque = value.max(0.0),
+            PlaneProp::MaxHealth => plane.max_health = value.max(1.0),
+            PlaneProp::Length => plane.length = value.max(1.0),
+            PlaneProp::WingChord => plane.wing_chord = value.max(0.2),
+            PlaneProp::TailSpan => plane.tail_span = value.max(0.5),
+            PlaneProp::ColorR => plane.body_color[0] = value.clamp(0.0, 1.0),
+            PlaneProp::ColorG => plane.body_color[1] = value.clamp(0.0, 1.0),
+            PlaneProp::ColorB => plane.body_color[2] = value.clamp(0.0, 1.0),
+        }
+    }
+}
+
+/// A solid-modelling part field the parts inspector can nudge.
+#[derive(Clone, Copy)]
+enum PartProp {
+    PosX,
+    PosY,
+    PosZ,
+    RotX,
+    RotY,
+    RotZ,
+    ScaleX,
+    ScaleY,
+    ScaleZ,
+}
+
+impl PartProp {
+    const ALL: [PartProp; 9] = [
+        PartProp::PosX,
+        PartProp::PosY,
+        PartProp::PosZ,
+        PartProp::RotX,
+        PartProp::RotY,
+        PartProp::RotZ,
+        PartProp::ScaleX,
+        PartProp::ScaleY,
+        PartProp::ScaleZ,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            PartProp::PosX => "X",
+            PartProp::PosY => "Y",
+            PartProp::PosZ => "Z",
+            PartProp::RotX => "Rot X",
+            PartProp::RotY => "Rot Y",
+            PartProp::RotZ => "Rot Z",
+            PartProp::ScaleX => "Size X",
+            PartProp::ScaleY => "Size Y",
+            PartProp::ScaleZ => "Size Z",
+        }
+    }
+
+    fn step(self) -> f32 {
+        match self {
+            PartProp::RotX | PartProp::RotY | PartProp::RotZ => 15.0,
+            PartProp::ScaleX | PartProp::ScaleY | PartProp::ScaleZ => 0.5,
+            _ => 0.5,
+        }
+    }
+
+    fn get(self, part: &openthunder::solid::Shape) -> f32 {
+        match self {
+            PartProp::PosX => part.position[0],
+            PartProp::PosY => part.position[1],
+            PartProp::PosZ => part.position[2],
+            PartProp::RotX => part.rotation[0],
+            PartProp::RotY => part.rotation[1],
+            PartProp::RotZ => part.rotation[2],
+            PartProp::ScaleX => part.scale[0],
+            PartProp::ScaleY => part.scale[1],
+            PartProp::ScaleZ => part.scale[2],
+        }
+    }
+
+    fn nudge(self, part: &mut openthunder::solid::Shape, delta: f32) {
+        match self {
+            PartProp::PosX => part.position[0] += delta,
+            PartProp::PosY => part.position[1] += delta,
+            PartProp::PosZ => part.position[2] += delta,
+            PartProp::RotX => part.rotation[0] += delta,
+            PartProp::RotY => part.rotation[1] += delta,
+            PartProp::RotZ => part.rotation[2] += delta,
+            PartProp::ScaleX => part.scale[0] = (part.scale[0] + delta).max(0.1),
+            PartProp::ScaleY => part.scale[1] = (part.scale[1] + delta).max(0.1),
+            PartProp::ScaleZ => part.scale[2] = (part.scale[2] + delta).max(0.1),
+        }
+    }
+}
+
 #[derive(Resource)]
 struct Editor {
     doc: MapDoc,
@@ -184,6 +445,8 @@ struct Editor {
     mode: Mode,
     /// Index into `doc.planes` (the mission's embedded plane list).
     plane_selected: usize,
+    /// Index into the selected plane's solid parts.
+    part_selected: usize,
     dialog: Option<Dialog>,
     input: TextInput,
     look: Vec2,
@@ -215,6 +478,7 @@ impl Editor {
             server: None,
             mode: Mode::Map,
             plane_selected: 0,
+            part_selected: 0,
             dialog: None,
             input: TextInput::default(),
             look: Vec2::new(0.0, -0.35),
@@ -323,6 +587,14 @@ enum Action {
     RenamePlane,
     ExportPlane,
     AddBuiltinPlanes,
+    NudgePlane(PlaneProp, f32),
+    ToggleWep,
+    AddPart,
+    DeletePart,
+    SelectPart(usize),
+    CyclePartShape,
+    CyclePartOp,
+    NudgePart(PartProp, f32),
     DeletePlane,
     FocusDialog(Focus),
     DialogConfirm,
@@ -350,6 +622,13 @@ impl Action {
                 | Action::WaterLevel(..)
                 | Action::AddBuiltinPlanes
                 | Action::DeletePlane
+                | Action::NudgePlane(..)
+                | Action::ToggleWep
+                | Action::AddPart
+                | Action::DeletePart
+                | Action::CyclePartShape
+                | Action::CyclePartOp
+                | Action::NudgePart(..)
                 | Action::DialogConfirm
         )
     }
@@ -715,7 +994,7 @@ fn spawn_ui(mut commands: Commands) {
                     center
                         .spawn((
                             Node {
-                                width: percent(100),
+                                width: percent(62),
                                 height: percent(100),
                                 flex_direction: FlexDirection::Column,
                                 padding: UiRect::all(px(10)),
@@ -940,6 +1219,7 @@ fn apply_action(editor: &mut Editor, action: Action) {
         Action::Redo => redo(editor),
         Action::SetMode(mode) => {
             editor.mode = mode;
+            editor.dirty = true;
             editor.ui_dirty = true;
         }
         Action::ToggleServer => toggle_server(editor),
@@ -1112,6 +1392,107 @@ fn apply_action(editor: &mut Editor, action: Action) {
                 editor.status = format!("Removed plane '{id}' from the mission.");
             }
         }
+        Action::NudgePlane(prop, delta) => {
+            if let Some(plane) = editor.doc.planes.get_mut(editor.plane_selected) {
+                let mut config = plane.config();
+                let value = prop.get(&config) + delta;
+                prop.set(&mut config, value);
+                plane.set_config(&config);
+                editor.dirty = true;
+                editor.ui_dirty = true;
+            }
+        }
+        Action::ToggleWep => {
+            if let Some(plane) = editor.doc.planes.get_mut(editor.plane_selected) {
+                let mut config = plane.config();
+                config.has_wep = !config.has_wep;
+                plane.set_config(&config);
+                editor.dirty = true;
+                editor.ui_dirty = true;
+                editor.status = format!(
+                    "WEP {}.",
+                    if config.has_wep {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
+                );
+            }
+        }
+        Action::AddPart => {
+            if let Some(plane) = editor.doc.planes.get_mut(editor.plane_selected) {
+                let mut config = plane.config();
+                config.solid.parts.push(openthunder::solid::Shape::new(
+                    openthunder::solid::Primitive::Box,
+                    [0.0, 0.0, 0.0],
+                    [1.0, 1.0, 1.0],
+                ));
+                editor.part_selected = config.solid.parts.len() - 1;
+                plane.set_config(&config);
+                editor.dirty = true;
+                editor.ui_dirty = true;
+                editor.status = "Added a box part.".to_string();
+            }
+        }
+        Action::DeletePart => {
+            if let Some(plane) = editor.doc.planes.get_mut(editor.plane_selected) {
+                let mut config = plane.config();
+                if editor.part_selected < config.solid.parts.len() {
+                    config.solid.parts.remove(editor.part_selected);
+                    editor.part_selected = editor.part_selected.saturating_sub(1);
+                    plane.set_config(&config);
+                    editor.dirty = true;
+                    editor.ui_dirty = true;
+                }
+            }
+        }
+        Action::SelectPart(index) => {
+            editor.part_selected = index;
+            editor.ui_dirty = true;
+        }
+        Action::CyclePartShape => {
+            if let Some(plane) = editor.doc.planes.get_mut(editor.plane_selected) {
+                let mut config = plane.config();
+                if let Some(part) = config.solid.parts.get_mut(editor.part_selected) {
+                    let current = openthunder::solid::Primitive::ALL
+                        .iter()
+                        .position(|p| *p == part.primitive)
+                        .unwrap_or(0);
+                    part.primitive = openthunder::solid::Primitive::ALL
+                        [(current + 1) % openthunder::solid::Primitive::ALL.len()];
+                    plane.set_config(&config);
+                    editor.dirty = true;
+                    editor.ui_dirty = true;
+                }
+            }
+        }
+        Action::CyclePartOp => {
+            if let Some(plane) = editor.doc.planes.get_mut(editor.plane_selected) {
+                let mut config = plane.config();
+                if let Some(part) = config.solid.parts.get_mut(editor.part_selected) {
+                    let current = openthunder::solid::BoolOp::ALL
+                        .iter()
+                        .position(|op| *op == part.op)
+                        .unwrap_or(0);
+                    part.op = openthunder::solid::BoolOp::ALL
+                        [(current + 1) % openthunder::solid::BoolOp::ALL.len()];
+                    plane.set_config(&config);
+                    editor.dirty = true;
+                    editor.ui_dirty = true;
+                }
+            }
+        }
+        Action::NudgePart(prop, delta) => {
+            if let Some(plane) = editor.doc.planes.get_mut(editor.plane_selected) {
+                let mut config = plane.config();
+                if let Some(part) = config.solid.parts.get_mut(editor.part_selected) {
+                    prop.nudge(part, delta);
+                    plane.set_config(&config);
+                    editor.dirty = true;
+                    editor.ui_dirty = true;
+                }
+            }
+        }
         Action::FocusDialog(focus) => {
             if let Some(dialog) = editor.dialog.as_mut() {
                 dialog.focus = focus;
@@ -1194,6 +1575,53 @@ fn confirm_dialog(editor: &mut Editor) {
 // ---------------------------------------------------------------------------
 // Dynamic panels
 // ---------------------------------------------------------------------------
+
+/// A compact labelled `− value +` stepper used in the plane editor grids.
+fn stepper_row(
+    parent: &mut ChildSpawnerCommands,
+    label: &str,
+    value: f32,
+    action: impl Fn(f32) -> Action,
+) {
+    parent
+        .spawn(Node {
+            width: px(330),
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            column_gap: px(4),
+            ..default()
+        })
+        .with_children(|row| {
+            row.spawn(Node {
+                width: px(140),
+                ..default()
+            })
+            .with_children(|cell| {
+                cell.spawn(text(label, 11.5, DIM));
+            });
+            button(row, "−", action(-1.0), false);
+            row.spawn(Node {
+                flex_grow: 1.0,
+                justify_content: JustifyContent::Center,
+                ..default()
+            })
+            .with_children(|cell| {
+                cell.spawn(text(fmt_value(value), 12.0, TEXT));
+            });
+            button(row, "+", action(1.0), false);
+        });
+}
+
+/// Format a value with a sensible number of decimals.
+fn fmt_value(value: f32) -> String {
+    if value.abs() >= 100.0 {
+        format!("{value:.0}")
+    } else if value.abs() >= 10.0 {
+        format!("{value:.1}")
+    } else {
+        format!("{value:.2}")
+    }
+}
 
 fn rebuild_ui(
     mut commands: Commands,
@@ -1386,6 +1814,100 @@ fn rebuild_ui(
                 button(row, "Rename", Action::RenamePlane, false);
                 button(row, "Delete", Action::DeletePlane, false);
             });
+
+            // --- Flight characteristics ---
+            spacer_h(parent, 10.0);
+            parent.spawn(text("Flight characteristics", 14.0, TEXT));
+            let selected_config = editor
+                .doc
+                .planes
+                .get(editor.plane_selected)
+                .map(|plane| plane.config());
+            parent
+                .spawn(Node {
+                    width: percent(100),
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    column_gap: px(14),
+                    row_gap: px(2),
+                    ..default()
+                })
+                .with_children(|grid| {
+                    if let Some(config) = &selected_config {
+                        for prop in PlaneProp::ALL {
+                            stepper_row(grid, prop.label(), prop.get(config), move |m| {
+                                Action::NudgePlane(prop, m * prop.step())
+                            });
+                        }
+                    }
+                });
+            row(parent, |row| {
+                let wep = selected_config
+                    .as_ref()
+                    .map(|config| config.has_wep)
+                    .unwrap_or(false);
+                button(
+                    row,
+                    if wep { "WEP: on" } else { "WEP: off" },
+                    Action::ToggleWep,
+                    wep,
+                );
+            });
+
+            // --- Boolean-modelled parts ---
+            spacer_h(parent, 10.0);
+            parent.spawn(text("Model parts (boolean)", 14.0, TEXT));
+            parent.spawn(text(
+                "Primitives combined with union / subtract / intersect, meshed into the model.",
+                11.0,
+                DIM,
+            ));
+            if let Some(config) = &selected_config {
+                if config.solid.parts.is_empty() {
+                    parent.spawn(text(
+                        "(using the procedural mesh — add a part to model one)",
+                        11.0,
+                        DIM,
+                    ));
+                }
+                for (index, part) in config.solid.parts.iter().enumerate() {
+                    let label =
+                        format!("{index:>2}  {}  {}", part.primitive.label(), part.op.label());
+                    list_row(
+                        parent,
+                        &label,
+                        Action::SelectPart(index),
+                        index == editor.part_selected,
+                    );
+                }
+            }
+            row(parent, |row| {
+                button(row, "Add part", Action::AddPart, false);
+                button(row, "Shape", Action::CyclePartShape, false);
+                button(row, "Operation", Action::CyclePartOp, false);
+                button(row, "Delete part", Action::DeletePart, false);
+            });
+            parent
+                .spawn(Node {
+                    width: percent(100),
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    column_gap: px(14),
+                    row_gap: px(2),
+                    ..default()
+                })
+                .with_children(|grid| {
+                    if let Some(part) = selected_config
+                        .as_ref()
+                        .and_then(|config| config.solid.parts.get(editor.part_selected))
+                    {
+                        for prop in PartProp::ALL {
+                            stepper_row(grid, prop.label(), prop.get(part), move |m| {
+                                Action::NudgePart(prop, m * prop.step())
+                            });
+                        }
+                    }
+                });
         });
     }
 
@@ -1900,6 +2422,22 @@ fn apply_text(editor: &mut Editor, field: Focus, value: String) {
 // Preview, status, test server
 // ---------------------------------------------------------------------------
 
+/// Build a Bevy `Mesh` from a boolean-modelled solid.
+fn solid_mesh(solid: &openthunder::solid::Solid, resolution: usize) -> Mesh {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::mesh::{Indices, PrimitiveTopology};
+
+    let size = (solid.extent() * 2.2).max(1.0);
+    let built = solid.mesh(resolution, size);
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, built.positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, built.normals)
+    .with_inserted_indices(Indices::U32(built.indices))
+}
+
 /// Build a vertex-coloured mesh from a heightmap — the editor previews the same
 /// mesh the game renders.
 fn heightmap_mesh(
@@ -1969,6 +2507,24 @@ fn rebuild_preview(
     editor.dirty = false;
     for entity in &existing {
         commands.entity(entity).despawn();
+    }
+
+    // In Planes mode, preview the selected plane's boolean model.
+    if editor.mode == Mode::Planes {
+        if let Some(plane) = editor.doc.planes.get(editor.plane_selected) {
+            let solid = plane.config().solid;
+            if !solid.is_empty() {
+                let mesh = solid_mesh(&solid, 44);
+                let material = materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.76, 0.77, 0.79),
+                    perceptual_roughness: 0.6,
+                    metallic: 0.2,
+                    ..default()
+                });
+                commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(material), Preview));
+            }
+        }
+        return;
     }
 
     // --- Terrain ---

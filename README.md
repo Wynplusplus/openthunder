@@ -115,16 +115,29 @@ for `../openthunder_server` by default; override with `OPENTHUNDER_SERVER_DIR`.
   undoable (64 steps).
 
 **Planes tab — click *Planes* in the toolbar:** manages the **mission's plane
-list**. The mission file carries each plane's full config *and* its glTF/GLB
-model, so the dedicated server needs no separate `planes/` setup — loading the
-mission just works.
+list**. The mission file carries each plane's full config *and* its model, so the
+dedicated server needs no separate `planes/` setup — loading the mission just
+works.
 
 - **New plane…** — name it and optionally embed a `.glb`/`.gltf` file.
 - **Import .plane…** — load a standalone plane file into the list.
 - **Export .plane** — write the selected plane (config + model) to a single
   self-contained `.plane` file.
-- **Set model…** — embed a model file (or leave it empty to clear it).
+- **Set model…** — embed a glTF/GLB file (or leave it empty to clear it).
 - **Add built-ins** / **Rename** / **Delete**.
+
+With a plane selected the panel also shows:
+
+- **Flight characteristics** — mass, wing area/span, engine power and thrust,
+  WEP, critical altitude, CL max, stall AoA, drag, control rates and stability,
+  responsiveness, cruise/max IAS, g limit, prop torque, health, fuselage/wing/tail
+  sizes and body colour, all as `−`/`+` steppers.
+- **Model parts (boolean)** — build the plane's mesh from **box / sphere /
+  cylinder / cone / capsule** primitives combined with **union / subtract /
+  intersect**, nudging each part's position, rotation and size. The solid is
+  meshed (surface nets) and previewed in the viewport; it replaces the procedural
+  mesh in-game. `Add part` / `Shape` / `Operation` / `Delete part` manage the
+  list.
 
 **Camera:** hold the **right mouse button** to look, `WASD` to fly, `Q`/`E`
 down/up, `Shift` for a speed boost, and the mouse wheel to move forward/back.
@@ -141,6 +154,12 @@ configs and models to every client on connect.
 
 A plane can also be saved on its own as a self-contained `.plane` file (config +
 model) and imported into another mission. Both formats are plain text.
+
+A plane's model can be either a glTF/GLB file or a **boolean solid**: `[part]`
+blocks naming a `shape` (box / sphere / cylinder / cone / capsule), an `op`
+(union / subtract / intersect) and `position` / `rotation` / `scale`. The client
+evaluates the signed-distance field and meshes it with **surface nets**, so
+subtracting a sphere from a box leaves a smooth dent rather than a blocky hole.
 
 The `[terrain]` section carries the **heightmap**: `size`, `resolution`,
 `water_level`, colours, and `heights = <Base64 little-endian f32 grid>`. The
@@ -490,6 +509,7 @@ src/
   planes.rs          the list of aircraft offered by the launcher
   plane_config.rs    plane definitions (flight model + model + guns)
   map_doc.rs         map/mission documents + embedded planes — editor/server format
+  solid.rs           boolean solid modelling (SDF primitives + surface-nets meshing)
   terrain.rs         heightmap terrain (sculpting, sampling, Base64 storage)
   base64.rs          dependency-free Base64 (embeds model bytes in text files)
   servers.rs         the server list shown by the launcher

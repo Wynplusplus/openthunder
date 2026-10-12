@@ -141,6 +141,8 @@ pub struct AircraftSpec {
     pub tail_span: f32,
     /// Optional glTF/GLB model that replaces the procedural mesh.
     pub model: Option<String>,
+    /// A boolean-modelled mesh (union / subtract / intersect primitives).
+    pub solid: openthunder::solid::Solid,
 }
 
 /// Registry of every aircraft type the game knows about.
@@ -399,6 +401,7 @@ impl AircraftSpec {
             wing_chord: config.wing_chord,
             tail_span: config.tail_span,
             model: config.model.clone(),
+            solid: config.solid.clone(),
         }
     }
 }
@@ -452,6 +455,22 @@ pub fn spawn_aircraft(
     root
 }
 
+/// Build a Bevy `Mesh` from a boolean-modelled solid.
+pub fn solid_mesh(solid: &openthunder::solid::Solid, resolution: usize) -> Mesh {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::mesh::{Indices, PrimitiveTopology};
+
+    let size = (solid.extent() * 2.2).max(1.0);
+    let built = solid.mesh(resolution, size);
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, built.positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, built.normals)
+    .with_inserted_indices(Indices::U32(built.indices))
+}
+
 /// Builds the visual model for `spec` as children of `root`.
 ///
 /// Used for both the player's aircraft and remote (multiplayer) ones.
@@ -462,6 +481,24 @@ pub fn spawn_aircraft_model(
     spec: &AircraftSpec,
     root: Entity,
 ) {
+    // A boolean-modelled mesh replaces the procedural mesh.
+    if !spec.solid.is_empty() {
+        let mesh = solid_mesh(&spec.solid, 40);
+        let material = materials.add(StandardMaterial {
+            base_color: spec.body_color,
+            perceptual_roughness: 0.6,
+            metallic: 0.15,
+            ..default()
+        });
+        commands.entity(root).with_children(|parent| {
+            parent.spawn((
+                Mesh3d(meshes.add(mesh)),
+                MeshMaterial3d(material),
+                Transform::default(),
+            ));
+        });
+        return;
+    }
     // A custom glTF model replaces the procedural mesh (queued by
     // `queue_aircraft_models`).
     if spec.model.is_some() {

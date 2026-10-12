@@ -10,6 +10,8 @@
 
 use core::fmt::Write;
 
+use crate::solid::{BoolOp, Primitive, Shape, Solid};
+
 /// One gun group.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GunConfig {
@@ -93,6 +95,9 @@ pub struct PlaneConfig {
     pub tail_span: f32,
     /// Optional glTF/GLB model (an asset path) that replaces the procedural mesh.
     pub model: Option<String>,
+    /// A boolean-modelled mesh (union / subtract / intersect primitives). When
+    /// non-empty it replaces both the procedural mesh and `model`.
+    pub solid: Solid,
 
     // --- Armament ---
     pub guns: Vec<GunConfig>,
@@ -144,6 +149,7 @@ impl Default for PlaneConfig {
             wing_chord: 2.0,
             tail_span: 3.4,
             model: None,
+            solid: Solid::default(),
             guns: vec![GunConfig::default()],
         }
     }
@@ -183,6 +189,7 @@ impl PlaneConfig {
             ..Default::default()
         };
         let mut current_gun: Option<usize> = None;
+        let mut current_part: Option<Shape> = None;
 
         for raw in text.lines() {
             let line = raw.trim();
@@ -190,14 +197,21 @@ impl PlaneConfig {
                 continue;
             }
 
-            // Section header: `[gun N]`.
+            // Section header: `[gun N]` or `[part]`.
             if let Some(inner) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+                // Leaving a part: commit it.
+                if let Some(part) = current_part.take() {
+                    plane.solid.parts.push(part);
+                }
                 if let Some(rest) = inner.trim().strip_prefix("gun") {
                     let index: usize = rest.trim().parse().unwrap_or(plane.guns.len());
                     while plane.guns.len() <= index {
                         plane.guns.push(GunConfig::default());
                     }
                     current_gun = Some(index);
+                } else if inner.trim().eq_ignore_ascii_case("part") {
+                    current_gun = None;
+                    current_part = Some(Shape::new(Primitive::default(), [0.0; 3], [1.0; 3]));
                 }
                 continue;
             }
@@ -207,6 +221,38 @@ impl PlaneConfig {
             };
             let key = key.trim();
             let value = value.trim();
+
+            if let Some(part) = current_part.as_mut() {
+                match key {
+                    "shape" => {
+                        if let Some(primitive) = Primitive::parse(value) {
+                            part.primitive = primitive;
+                        }
+                    }
+                    "op" => {
+                        if let Some(op) = BoolOp::parse(value) {
+                            part.op = op;
+                        }
+                    }
+                    "position" => {
+                        if let Some(v) = parse_vec3(value) {
+                            part.position = v;
+                        }
+                    }
+                    "rotation" => {
+                        if let Some(v) = parse_vec3(value) {
+                            part.rotation = v;
+                        }
+                    }
+                    "scale" => {
+                        if let Some(v) = parse_vec3(value) {
+                            part.scale = v;
+                        }
+                    }
+                    _ => {}
+                }
+                continue;
+            }
 
             if let Some(index) = current_gun {
                 let gun = &mut plane.guns[index];
@@ -316,6 +362,9 @@ impl PlaneConfig {
                 _ => {}
             }
         }
+        if let Some(part) = current_part.take() {
+            plane.solid.parts.push(part);
+        }
         plane
     }
 
@@ -393,6 +442,9 @@ impl PlaneConfig {
                 let _ = writeln!(out, "muzzle = {} {} {}", muzzle[0], muzzle[1], muzzle[2]);
             }
         }
+        if !self.solid.is_empty() {
+            out.push_str(&self.solid.to_config_string());
+        }
         out
     }
 }
@@ -445,6 +497,7 @@ pub fn default_planes() -> Vec<PlaneConfig> {
             wing_chord: 2.0,
             tail_span: 3.4,
             model: None,
+            solid: Solid::default(),
             guns: vec![GunConfig {
                 name: "M2 Browning".to_string(),
                 caliber_mm: 12.7,
@@ -508,6 +561,7 @@ pub fn default_planes() -> Vec<PlaneConfig> {
             wing_chord: 2.0,
             tail_span: 3.4,
             model: None,
+            solid: Solid::default(),
             guns: vec![
                 GunConfig {
                     name: "MG 151/20".to_string(),
@@ -576,6 +630,7 @@ pub fn default_planes() -> Vec<PlaneConfig> {
             wing_chord: 2.0,
             tail_span: 3.4,
             model: None,
+            solid: Solid::default(),
             guns: vec![GunConfig {
                 name: "Hispano Mk II".to_string(),
                 caliber_mm: 20.0,
@@ -652,5 +707,21 @@ muzzle = -1 2 3
         assert_eq!(plane.model.as_deref(), Some("models/fighter.glb"));
         let again = PlaneConfig::parse("custom", &plane.to_config_string());
         assert_eq!(again.model, plane.model);
+    }
+
+    #[test]
+    fn parses_and_serializes_boolean_parts() {
+        let text = "name = Modelled\n\
+                    [part]\nshape = box\nop = union\nposition = 0 0 0\nscale = 6 1 1\n\
+                    [part]\nshape = sphere\nop = subtract\nposition = 2 0 0\nscale = 1.5 1.5 1.5\n";
+        let plane = PlaneConfig::parse("modelled", text);
+        assert_eq!(plane.solid.parts.len(), 2);
+        assert_eq!(plane.solid.parts[0].primitive, crate::solid::Primitive::Box);
+        assert_eq!(plane.solid.parts[1].op, crate::solid::BoolOp::Subtract);
+        assert_eq!(plane.solid.parts[1].position, [2.0, 0.0, 0.0]);
+
+        let again = PlaneConfig::parse("modelled", &plane.to_config_string());
+        assert_eq!(again.solid, plane.solid, "parts should round-trip");
+        assert_eq!(plane.guns.len(), 1, "the default gun survives");
     }
 }
