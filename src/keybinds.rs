@@ -142,6 +142,33 @@ pub const ACTIONS: &[ActionInfo] = &[
     },
 ];
 
+/// A tunable numeric setting, edited in the launcher alongside the keybinds.
+pub struct SettingInfo {
+    /// Config key, e.g. `snap_area`.
+    pub name: &'static str,
+    /// Label shown in the launcher.
+    pub label: &'static str,
+    pub default: f32,
+    pub min: f32,
+    pub max: f32,
+    /// How much one launcher step changes it.
+    pub step: f32,
+}
+
+/// Numeric settings. `snap_area` is the aim error (degrees) at which the aim
+/// snap assist reaches full force — the outer edge of the snap zone.
+pub const SETTINGS: &[SettingInfo] = &[SettingInfo {
+    name: "snap_area",
+    label: "Aim snap area (deg)",
+    default: 30.0,
+    min: 5.0,
+    max: 60.0,
+    step: 2.5,
+}];
+
+/// Stable index into [`SETTINGS`] / [`Keybinds::values`].
+pub const SNAP_AREA: usize = 0;
+
 // Stable indices into [`ACTIONS`] / [`Keybinds::keys`], used by the game.
 pub const PITCH_UP: usize = 0;
 pub const PITCH_DOWN: usize = 1;
@@ -248,16 +275,19 @@ pub fn key_display(name: &str) -> &str {
     }
 }
 
-/// The player's keybinds, one entry per [`ACTIONS`] entry.
+/// The player's keybinds (one entry per [`ACTIONS`] entry) and numeric
+/// [`SETTINGS`].
 #[derive(Clone, Debug)]
 pub struct Keybinds {
     pub keys: Vec<String>,
+    pub values: Vec<f32>,
 }
 
 impl Default for Keybinds {
     fn default() -> Self {
         Self {
             keys: ACTIONS.iter().map(|a| a.default_key.to_string()).collect(),
+            values: SETTINGS.iter().map(|s| s.default).collect(),
         }
     }
 }
@@ -269,6 +299,18 @@ impl Keybinds {
 
     pub fn set(&mut self, index: usize, key: &str) {
         self.keys[index] = key.to_string();
+    }
+
+    /// A numeric setting's value.
+    pub fn value(&self, index: usize) -> f32 {
+        self.values.get(index).copied().unwrap_or(0.0)
+    }
+
+    /// Set a numeric setting, clamped to its range.
+    pub fn set_value(&mut self, index: usize, value: f32) {
+        if let Some(info) = SETTINGS.get(index) {
+            self.values[index] = value.clamp(info.min, info.max);
+        }
     }
 
     /// Load the config, creating it with defaults if it does not exist yet.
@@ -306,6 +348,10 @@ impl Keybinds {
                 if is_supported(value) {
                     keybinds.keys[index] = value.to_string();
                 }
+            } else if let Some(index) = SETTINGS.iter().position(|s| s.name == name) {
+                if let Ok(number) = value.parse::<f32>() {
+                    keybinds.set_value(index, number);
+                }
             }
         }
         // A clash between WEP and pitch-down can happen for configs saved before
@@ -323,6 +369,10 @@ impl Keybinds {
         );
         for (index, action) in ACTIONS.iter().enumerate() {
             out.push_str(&format!("{} = {}\n", action.name, self.keys[index]));
+        }
+        out.push_str("\n# Settings\n");
+        for (index, setting) in SETTINGS.iter().enumerate() {
+            out.push_str(&format!("{} = {}\n", setting.name, self.value(index)));
         }
         out
     }
@@ -400,5 +450,26 @@ mod tests {
         assert!(is_supported("MouseRight"), "mouse buttons are bindable");
         assert!(is_supported("MouseLeft"));
         assert!(is_supported("MouseMiddle"));
+    }
+
+    #[test]
+    fn settings_round_trip_through_the_config() {
+        let mut keybinds = Keybinds::default();
+        assert_eq!(keybinds.value(SNAP_AREA), SETTINGS[SNAP_AREA].default);
+
+        keybinds.set_value(SNAP_AREA, 42.0);
+        let parsed = Keybinds::parse(&keybinds.to_config_string());
+        assert_eq!(parsed.value(SNAP_AREA), 42.0, "settings should round-trip");
+
+        // Out-of-range values are clamped to the setting's range.
+        let mut keybinds = Keybinds::default();
+        keybinds.set_value(SNAP_AREA, 9_999.0);
+        assert_eq!(keybinds.value(SNAP_AREA), SETTINGS[SNAP_AREA].max);
+    }
+
+    #[test]
+    fn the_snap_area_defaults_on_and_is_editable() {
+        assert_eq!(ACTIONS[TOGGLE_SNAP].default_key, "H");
+        assert!(SETTINGS[SNAP_AREA].default >= 5.0);
     }
 }

@@ -136,6 +136,8 @@ pub fn binding_from_name(name: &str) -> Option<Binding> {
 pub struct Bindings {
     codes: Vec<Option<Binding>>,
     names: Vec<String>,
+    /// The aim snap area in radians (the `snap_area` setting, stored in degrees).
+    snap_area: f32,
 }
 
 impl Bindings {
@@ -147,7 +149,14 @@ impl Bindings {
                 .map(|name| binding_from_name(name))
                 .collect(),
             names: config.keys.clone(),
+            snap_area: config.value(openthunder::keybinds::SNAP_AREA).to_radians(),
         }
+    }
+
+    /// The aim snap area in radians: the aim error at which the snap assist
+    /// reaches full force.
+    pub fn snap_area(&self) -> f32 {
+        self.snap_area
     }
 
     pub fn get(&self, index: usize) -> Option<Binding> {
@@ -460,6 +469,7 @@ fn read_player_input(
             aircraft.angular_acceleration,
             mouse_aim.target,
             mouse_aim.snap,
+            bindings.snap_area(),
         )
     } else {
         (0.0, 0.0, 0.0)
@@ -584,6 +594,7 @@ fn aim_controls(
     angular_acceleration: Vec3,
     desired_dir: Vec3,
     snap: bool,
+    snap_area: f32,
 ) -> (f32, f32, f32) {
     /// Prediction steps and the time each advances, seconds.
     const STEPS: usize = 5;
@@ -638,13 +649,13 @@ fn aim_controls(
     // with the camera centred on the desired direction the nose-to-aim angle is
     // exactly how near the edge the crosshair is.
     if snap {
-        /// Below this aim error (radians) the snap does nothing.
-        const SNAP_START: f32 = 0.15;
-        /// At/after this aim error the snap commands full deflection.
-        const SNAP_FULL: f32 = 0.35;
+        // The snap zone runs from 40% of the area up to the area itself, so the
+        // setting moves the whole zone. A bigger `snap_area` = a bigger zone.
+        let full = snap_area.max(0.05);
+        let start = full * 0.4;
 
         let offset = (rotation * Vec3::NEG_Z).angle_between(desired);
-        let t = ((offset - SNAP_START) / (SNAP_FULL - SNAP_START)).clamp(0.0, 1.0);
+        let t = ((offset - start) / (full - start)).clamp(0.0, 1.0);
         if t > 0.0 {
             // Full deflection on each axis, in the direction that reduces the
             // error.
@@ -1066,8 +1077,14 @@ mod tests {
 
     #[test]
     fn aim_controls_command_nothing_when_on_target() {
-        let (pitch, roll, yaw) =
-            aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, Vec3::NEG_Z, false);
+        let (pitch, roll, yaw) = aim_controls(
+            Quat::IDENTITY,
+            Vec3::ZERO,
+            Vec3::ZERO,
+            Vec3::NEG_Z,
+            false,
+            0.5,
+        );
         assert!(pitch.abs() < 1e-3, "pitch {pitch}");
         assert!(roll.abs() < 1e-3, "roll {roll}");
         assert!(yaw.abs() < 1e-3, "yaw {yaw}");
@@ -1078,7 +1095,7 @@ mod tests {
         // A direction 30 degrees to the right of the nose.
         let target = Quat::from_rotation_y(-0.5) * Vec3::NEG_Z;
         let (pitch, roll, yaw) =
-            aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, target, false);
+            aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, target, false, 0.5);
         assert!(
             roll > 0.0,
             "target to the right should roll right, got {roll}"
@@ -1095,7 +1112,8 @@ mod tests {
     #[test]
     fn aim_controls_predict_the_rotation() {
         let target = Quat::from_rotation_y(-0.05) * Vec3::NEG_Z;
-        let (_, still, _) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, target, false);
+        let (_, still, _) =
+            aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, target, false, 0.5);
         // Already rolling toward the target (a negative roll rate about +Z banks
         // right, which is the way the target is).
         let (_, rolling, _) = aim_controls(
@@ -1104,6 +1122,7 @@ mod tests {
             Vec3::ZERO,
             target,
             false,
+            0.5,
         );
         assert!(
             rolling < still,
@@ -1115,7 +1134,7 @@ mod tests {
     fn aim_controls_level_the_wings_when_banked_and_on_target() {
         let rotation = Quat::from_rotation_z(-0.6); // banked right
         let forward = rotation * Vec3::NEG_Z; // rolling does not change forward
-        let (_, roll, _) = aim_controls(rotation, Vec3::ZERO, Vec3::ZERO, forward, false);
+        let (_, roll, _) = aim_controls(rotation, Vec3::ZERO, Vec3::ZERO, forward, false, 0.5);
         assert!(
             roll < 0.0,
             "on-target but banked right should roll left to level, got {roll}"
@@ -1132,7 +1151,7 @@ mod tests {
     #[test]
     fn aim_controls_use_the_rudder() {
         let target = Quat::from_rotation_y(-0.5) * Vec3::NEG_Z;
-        let (_, _, yaw) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, target, false);
+        let (_, _, yaw) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, target, false, 0.5);
         assert!(yaw >= 0.2, "aiming right should use the rudder, got {yaw}");
     }
 
@@ -1142,7 +1161,7 @@ mod tests {
     fn snap_assist_applies_full_force_near_the_edge() {
         // Beyond the snap threshold the aileron goes to full deflection.
         let target = Quat::from_rotation_y(-0.5) * Vec3::NEG_Z;
-        let (_, roll, _) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, target, true);
+        let (_, roll, _) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, target, true, 0.5);
         assert!(
             (roll - 1.0).abs() < 1e-3,
             "the snap should command full aileron, got {roll}"
@@ -1150,12 +1169,19 @@ mod tests {
 
         // Just off centre (inside the snap threshold) it does nothing extra.
         let near = Quat::from_rotation_y(-0.02) * Vec3::NEG_Z;
-        let (_, off, _) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, near, false);
-        let (_, on, _) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, near, true);
+        let (_, off, _) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, near, false, 0.5);
+        let (_, on, _) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, near, true, 0.5);
         assert!((on - off).abs() < 1e-3, "near the centre the snap is inert");
 
         // On target there is nothing to snap.
-        let (_, roll, _) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, Vec3::NEG_Z, true);
+        let (_, roll, _) = aim_controls(
+            Quat::IDENTITY,
+            Vec3::ZERO,
+            Vec3::ZERO,
+            Vec3::NEG_Z,
+            true,
+            0.5,
+        );
         assert!(roll.abs() < 1e-3, "on target the snap assist does nothing");
     }
 

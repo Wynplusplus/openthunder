@@ -53,6 +53,8 @@ escapes, no extra TUI dependency) where you can:
 - **Display** — switch between **Fullscreen** (default) and Windowed.
 - **Mission editor** — opens the 3D map/plane editor (see below).
 - **Edit keybinds** — pick an action, press a new key, and it is saved instantly.
+  The screen also lists **numeric settings** (e.g. the aim snap area); select one
+  and use `Left`/`Right` to adjust it.
 - **Reset keybinds to defaults**.
 
 Settings are stored in shared config files:
@@ -327,9 +329,11 @@ In mouse-aim it does all of the following, and so do we:
 - **Aim snap assist** (on by default, toggle with `H`): as the crosshair nears
   the **screen edge** the instructor commands **full deflection** (100% force) on
   each axis instead of its proportional command, so the nose snaps back onto the
-  target. It ramps in from ~0.15 rad off-centre to full at ~0.35 rad. (Scaling
-  the gains instead does nothing — they already saturate the controls.) The HUD
-  shows the current state.
+  target. (Scaling the gains instead does nothing — they already saturate the
+  controls.) The **size of the snap zone** is the `Aim snap area` setting
+  (default 30°, range 5–60°), editable in the launcher's keybinds screen with
+  `Left`/`Right`; the zone runs from 40% of that angle up to it. The HUD shows
+  the on/off state.
 
 The mouse moves a **world-space aim direction**, not a screen position, so the
 on-screen cursor **drifts back toward the gun crosshair** as the nose catches up

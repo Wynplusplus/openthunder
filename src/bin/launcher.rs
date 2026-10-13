@@ -10,7 +10,7 @@
 use std::io::{self, Write};
 use std::process::Command;
 
-use openthunder::keybinds::{self, ACTIONS, Keybinds, SUPPORTED_KEYS, key_display};
+use openthunder::keybinds::{self, ACTIONS, Keybinds, SETTINGS, SUPPORTED_KEYS, key_display};
 use openthunder::planes;
 use openthunder::servers::{ServerList, servers_path};
 use openthunder::settings::Settings;
@@ -324,8 +324,8 @@ fn keybind_lines(
 ) -> Vec<String> {
     let mut lines = vec![
         String::new(),
-        "  \x1b[1;36mKeybinds\x1b[0m".to_string(),
-        "  \x1b[2mUp/Down select   Enter rebind   Backspace reset one   Esc back\x1b[0m"
+        "  \x1b[1;36mKeybinds & settings\x1b[0m".to_string(),
+        "  \x1b[2mUp/Down select   Enter rebind   Backspace reset   Left/Right adjust settings   Esc back\x1b[0m"
             .to_string(),
         "  \x1b[2mChanges are saved automatically.\x1b[0m".to_string(),
         String::new(),
@@ -341,6 +341,18 @@ fn keybind_lines(
             }
         } else {
             lines.push(format!("    {label} {key}"));
+        }
+    }
+    lines.push(String::new());
+    lines.push("  \x1b[2mSettings\x1b[0m".to_string());
+    for (index, setting) in SETTINGS.iter().enumerate() {
+        let row = ACTIONS.len() + index;
+        let label = format!("{:<22}", setting.label);
+        let value = format!("{:.1}", keybinds.value(index));
+        if row == selected {
+            lines.push(format!("  \x1b[7m> {label} < {value} >\x1b[0m"));
+        } else {
+            lines.push(format!("    {label}   {value}"));
         }
     }
     lines.push(String::new());
@@ -632,22 +644,35 @@ fn run() -> io::Result<()> {
                         }
                     }
                 } else {
+                    let row_count = ACTIONS.len() + SETTINGS.len();
+                    let is_setting = keybind_selected >= ACTIONS.len();
                     match key {
                         Key::Up => keybind_selected = keybind_selected.saturating_sub(1),
-                        Key::Down => {
-                            keybind_selected = (keybind_selected + 1).min(ACTIONS.len() - 1)
-                        }
-                        Key::Enter => {
+                        Key::Down => keybind_selected = (keybind_selected + 1).min(row_count - 1),
+                        Key::Enter if !is_setting => {
                             capturing = true;
                             status =
                                 format!("Press a key for {}...", ACTIONS[keybind_selected].label);
                         }
-                        Key::Backspace => {
+                        Key::Backspace if !is_setting => {
                             let default = ACTIONS[keybind_selected].default_key;
                             keybinds.set(keybind_selected, default);
                             let _ = keybinds.save();
                             status =
                                 format!("Reset {} to {default}.", ACTIONS[keybind_selected].label);
+                        }
+                        Key::Left | Key::Right if is_setting => {
+                            let index = keybind_selected - ACTIONS.len();
+                            let setting = &SETTINGS[index];
+                            let delta = if matches!(key, Key::Left) {
+                                -setting.step
+                            } else {
+                                setting.step
+                            };
+                            let value = keybinds.value(index) + delta;
+                            keybinds.set_value(index, value);
+                            let _ = keybinds.save();
+                            status = format!("{} = {:.1}", setting.label, keybinds.value(index));
                         }
                         Key::Esc | Key::Char('q') | Key::Char('Q') => {
                             screen = Screen::Menu;
@@ -662,4 +687,22 @@ fn run() -> io::Result<()> {
 
     drop(terminal);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keybind_screen_lists_the_settings() {
+        let keybinds = Keybinds::default();
+        // Select the first setting row (they follow the actions).
+        let lines = keybind_lines(&keybinds, ACTIONS.len(), false, "");
+        let text = lines.join("\n");
+        assert!(text.contains("Settings"), "a settings section is shown");
+        assert!(
+            text.contains(SETTINGS[0].label),
+            "the snap-area setting is listed: {text}"
+        );
+    }
 }
