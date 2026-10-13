@@ -12,7 +12,7 @@
 #![allow(dead_code)]
 
 /// Bump this whenever the message formats change.
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// Team index meaning "no team" (free flight and other unteamed modes).
 pub const NO_TEAM: u8 = 255;
@@ -57,10 +57,19 @@ pub enum ClientMessage {
     /// First message after connecting.
     Join { name: String, plane: String },
     /// Periodic state update of the client's own aircraft.
+    ///
+    /// Besides the transform it carries the **desired direction of flight** and
+    /// the **control values**, as in Gaijin's patent US8770979B2: a server can
+    /// then run or check the instructor itself instead of trusting the client's
+    /// rotation blindly.
     State {
         position: [f32; 3],
         rotation: [f32; 4],
         velocity: [f32; 3],
+        /// World-space desired direction of flight (`[0, 0, 0]` when not aiming).
+        desired: [f32; 3],
+        /// `(pitch, roll, yaw)` control values, each `-1..=1`.
+        controls: [f32; 3],
     },
     /// Graceful disconnect.
     Leave,
@@ -226,8 +235,10 @@ impl ClientMessage {
                 position,
                 rotation,
                 velocity,
+                desired,
+                controls,
             } => format!(
-                "STATE\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                "STATE\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 fmt3(position[0]),
                 fmt3(position[1]),
                 fmt3(position[2]),
@@ -238,6 +249,12 @@ impl ClientMessage {
                 fmt3(velocity[0]),
                 fmt3(velocity[1]),
                 fmt3(velocity[2]),
+                fmt3(desired[0]),
+                fmt3(desired[1]),
+                fmt3(desired[2]),
+                fmt3(controls[0]),
+                fmt3(controls[1]),
+                fmt3(controls[2]),
             ),
             ClientMessage::Leave => "LEAVE".to_string(),
             ClientMessage::Hit {
@@ -270,13 +287,15 @@ impl ClientMessage {
                 })
             }
             Some("STATE") => {
-                if fields.len() != 11 {
-                    return Err(ProtocolError("STATE wants 11 fields".into()));
+                if fields.len() != 17 {
+                    return Err(ProtocolError("STATE wants 17 fields".into()));
                 }
                 Ok(ClientMessage::State {
                     position: parse_vec3(&fields[1..4])?,
                     rotation: parse_vec4(&fields[4..8])?,
                     velocity: parse_vec3(&fields[8..11])?,
+                    desired: parse_vec3(&fields[11..14])?,
+                    controls: parse_vec3(&fields[14..17])?,
                 })
             }
             Some("LEAVE") => Ok(ClientMessage::Leave),
@@ -557,6 +576,8 @@ mod tests {
             position: [1.0, 2.5, -3.25],
             rotation: [0.0, 0.707, 0.0, 0.707],
             velocity: [10.0, 0.0, -150.0],
+            desired: [0.5, -0.25, 0.75],
+            controls: [0.1, -0.9, 0.3],
         });
         round_trip_client(ClientMessage::Leave);
         round_trip_client(ClientMessage::Hit {

@@ -26,11 +26,6 @@ const MAX_PITCH: f32 = 1.3;
 const NORMAL_FOV: f32 = std::f32::consts::FRAC_PI_4;
 /// Field of view while zoomed in (radians, about 18 degrees).
 const ZOOM_FOV: f32 = 0.32;
-/// The camera only starts orbiting toward the aim once it is this far from the
-/// nose (radians) — a dead-zone around the centre of the screen.
-const CAMERA_ORBIT_DEADZONE: f32 = 0.5;
-/// ...and orbits fully by this offset (radians), near the edge of the screen.
-const CAMERA_ORBIT_EDGE: f32 = 0.9;
 
 /// Marks the camera that follows the player's aircraft.
 #[derive(Component)]
@@ -167,24 +162,17 @@ fn chase_camera(
     }
 
     // --- Where the camera looks ---
-    // For small aim offsets it sits behind the nose; once the cursor nears the
-    // edge of the screen it orbits toward the aim (WT: "the camera accelerates
-    // toward the cursor"). While free-looking it follows the orbit instead. It
-    // stays level with the horizon rather than rolling with the aircraft, as in
-    // WT mouse aim.
+    // Patent US8770979B2: "the camera is set in such manner that the desired
+    // direction of flight is in exact center of the user's view". So the camera
+    // looks along the desired direction (the aim), keeping it centred. It stays
+    // level with the horizon rather than rolling with the aircraft, as in WT
+    // mouse aim. While free-looking it follows the orbit instead; with no aim it
+    // sits behind the nose.
     let nose = aircraft.rotation * Vec3::NEG_Z;
     let want = if look.active {
         (aircraft.rotation * look.rotation()) * Vec3::NEG_Z
     } else if mouse_aim.engaged && mouse_aim.target != Vec3::ZERO {
-        // Dead-zone around the centre, ramping to full orbit by the screen edge.
-        // Zooming in locks the view behind the nose (as in WT), so the orbit
-        // fades out as the zoom eases in.
-        let offset = nose.angle_between(mouse_aim.target);
-        let t = ((offset - CAMERA_ORBIT_DEADZONE)
-            / (CAMERA_ORBIT_EDGE - CAMERA_ORBIT_DEADZONE).max(0.01))
-        .clamp(0.0, 1.0);
-        let t = t * t * (3.0 - 2.0 * t) * (1.0 - zoom_state.amount);
-        nose.lerp(mouse_aim.target, t).normalize_or_zero()
+        mouse_aim.target.normalize_or_zero()
     } else {
         nose
     };
@@ -500,10 +488,10 @@ mod tests {
         );
     }
 
-    /// A small aim offset stays inside the dead-zone, so the camera does not
-    /// orbit for small cursor movements.
+    /// The patent's camera: the desired direction of flight is centred in the
+    /// view, so a small aim offset is *also* centred (no dead-zone).
     #[test]
-    fn the_camera_does_not_orbit_for_a_small_aim_offset() {
+    fn the_camera_centres_the_desired_direction() {
         use openthunder::keybinds::Keybinds;
 
         let mut app = App::new();
@@ -530,13 +518,14 @@ mod tests {
             ))
             .id();
 
-        // A moderate aim offset, still inside the dead-zone.
+        // A small aim offset should still be centred.
+        let target = Quat::from_rotation_y(-0.3) * Vec3::NEG_Z;
         {
             let mut aim = app.world_mut().resource_mut::<MouseAim>();
             aim.engaged = true;
-            aim.target = Quat::from_rotation_y(-0.3) * Vec3::NEG_Z;
+            aim.target = target;
         }
-        for _ in 0..60 {
+        for _ in 0..120 {
             app.world_mut()
                 .resource_mut::<Time>()
                 .advance_by(std::time::Duration::from_secs_f32(0.05));
@@ -546,8 +535,8 @@ mod tests {
         let rotation = app.world().get::<Transform>(camera).unwrap().rotation;
         let forward = rotation * Vec3::NEG_Z;
         assert!(
-            forward.x.abs() < 0.02,
-            "the camera should not orbit for a small aim offset, got {forward:?}"
+            forward.angle_between(target) < 0.02,
+            "the camera should look along the desired direction, got {forward:?}"
         );
     }
 
@@ -600,64 +589,6 @@ mod tests {
         assert!(
             distance > 19.0,
             "the camera should pull back under acceleration, got {distance:.1} m"
-        );
-    }
-
-    /// Zooming in locks the camera behind the nose — it stops orbiting toward
-    /// the aim (as in WT).
-    #[test]
-    fn zooming_in_stops_the_camera_orbiting() {
-        use openthunder::keybinds::Keybinds;
-
-        let mut app = App::new();
-        app.insert_resource(Time::<()>::default())
-            .init_resource::<ButtonInput<KeyCode>>()
-            .init_resource::<ButtonInput<MouseButton>>()
-            .init_resource::<FreeLook>()
-            .init_resource::<ZoomState>()
-            .init_resource::<MouseAim>()
-            .insert_resource(Bindings::from_config(&Keybinds::default()))
-            .add_systems(Update, chase_camera);
-
-        app.world_mut().spawn((
-            Transform::from_translation(Vec3::new(0.0, 1000.0, 0.0)),
-            test_aircraft(),
-            PlayerControlled,
-        ));
-        let camera = app
-            .world_mut()
-            .spawn((
-                Transform::default(),
-                Projection::Perspective(PerspectiveProjection::default()),
-                ChaseCamera,
-            ))
-            .id();
-
-        // A large aim offset that would normally orbit the camera...
-        {
-            let mut aim = app.world_mut().resource_mut::<MouseAim>();
-            aim.engaged = true;
-            aim.target = Quat::from_rotation_y(-0.85) * Vec3::NEG_Z;
-        }
-        // ...and zoom fully in.
-        {
-            let mut zoom = app.world_mut().resource_mut::<ZoomState>();
-            zoom.active = true;
-            zoom.amount = 1.0;
-        }
-
-        for _ in 0..60 {
-            app.world_mut()
-                .resource_mut::<Time>()
-                .advance_by(std::time::Duration::from_secs_f32(0.05));
-            app.update();
-        }
-
-        let rotation = app.world().get::<Transform>(camera).unwrap().rotation;
-        let forward = rotation * Vec3::NEG_Z;
-        assert!(
-            forward.x.abs() < 0.02,
-            "the camera should stay on the nose while zoomed, got {forward:?}"
         );
     }
 }

@@ -179,6 +179,13 @@ OpenThunder can join a dedicated server (a separate repo,
 server keeps the player roster and broadcasts snapshots at 20 Hz; the client
 streams its own aircraft state and renders everyone else.
 
+Each `STATE` update also carries the client's **desired direction of flight** and
+its **control values**, as Gaijin's patent suggests ("send a desired direction of
+flight to the server, thus reducing possibilities of modification of the
+algorithm on the client side"). The server stores them (gamemodes can read them)
+and checks the desired direction is a sane unit vector, so it can run or validate
+the instructor instead of trusting the reported rotation blindly.
+
 1. Start a server: `cargo run --release` in `openthunder_server` (listens on
    `0.0.0.0:7777`).
 2. In the launcher choose **Server → Local**, or run the game with
@@ -259,14 +266,15 @@ follows the pointer. Move the cursor off-centre to turn, and bring it back to th
 centre to level off and fly straight. The keyboard pitch/roll/rudder keys remain
 available as manual overrides, and `A`/`D` always give full roll authority.
 
-The **camera follows where you are aiming**: for small cursor movements it stays
-behind the nose, and once the cursor nears the **edge of the screen** the view
-orbits with it (WT: "the camera accelerates toward the cursor"). It stays **level
-with the horizon** rather than rolling with the aircraft, like War Thunder mouse
-aim, and the aircraft stays in view. Like War Thunder it also **pulls back when
-you accelerate or brake hard** (it is the acceleration, not the speed, that moves
-it) so you can read your energy state at a glance. **Zooming in locks the view
-behind the nose** — the orbit fades out as the zoom eases in, as in WT.
+The **camera keeps the desired direction of flight centred**, as Gaijin's patent
+specifies ("the camera is set in such manner that the desired direction of
+flight is in exact center of the user's view") — aim anywhere and the view swings
+to keep the cursor in the middle. It stays **level with the horizon** rather than
+rolling with the aircraft, like War Thunder mouse aim, and the aircraft stays in
+view. Like War Thunder it also **pulls back when you accelerate or brake hard**
+(it is the acceleration, not the speed, that moves it) so you can read your
+energy state at a glance. **Zoom** narrows the field of view and pulls the camera
+in.
 
 Press **`Esc`** at any time for the in-game menu (Resume / Quit to Desktop). The
 world **keeps flying** while it is open — the simulation is never paused; the

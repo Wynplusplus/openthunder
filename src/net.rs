@@ -214,6 +214,7 @@ fn send_line(stream: &mut TcpStream, message: &ClientMessage) -> std::io::Result
 fn send_local_state(
     time: Res<Time>,
     client: Res<NetClient>,
+    mouse_aim: Res<crate::flight::MouseAim>,
     mut accumulator: Local<f32>,
     query: Query<(&Transform, &Aircraft), With<PlayerControlled>>,
 ) {
@@ -230,10 +231,20 @@ fn send_local_state(
     *accumulator = 0.0;
 
     let rotation = transform.rotation;
+    // The desired direction of flight (patent US8770979B2): the server can run
+    // or check the instructor rather than trusting our rotation blindly.
+    let desired = if mouse_aim.engaged && mouse_aim.target != Vec3::ZERO {
+        mouse_aim.target.to_array()
+    } else {
+        [0.0, 0.0, 0.0]
+    };
+    let controls = aircraft.controls;
     let _ = outgoing.send(ClientMessage::State {
         position: transform.translation.to_array(),
         rotation: [rotation.x, rotation.y, rotation.z, rotation.w],
         velocity: aircraft.velocity.to_array(),
+        desired,
+        controls: [controls.pitch, controls.roll, controls.yaw],
     });
 }
 
