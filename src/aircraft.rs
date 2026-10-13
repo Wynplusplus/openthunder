@@ -231,6 +231,9 @@ pub struct Aircraft {
     pub velocity: Vec3,
     /// Body angular velocity in rad/s, ordered `(pitch about +X, yaw about +Y, roll about +Z)`.
     pub angular_velocity: Vec3,
+    /// Rate of change of [`Aircraft::angular_velocity`] (rad/s²). Used by the
+    /// mouse-aim instructor's predictive controller.
+    pub angular_acceleration: Vec3,
     /// Throttle, `0.0..=1.0`.
     pub throttle: f32,
     /// Current control inputs.
@@ -290,6 +293,7 @@ impl Aircraft {
             spec,
             velocity: Vec3::ZERO,
             angular_velocity: Vec3::ZERO,
+            angular_acceleration: Vec3::ZERO,
             throttle: 0.8,
             controls: Controls::default(),
             wep: false,

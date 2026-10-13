@@ -430,8 +430,9 @@ fn read_player_input(
     let (aim_pitch, aim_roll, aim_yaw) = if mouse_aim.engaged && !free_look.active {
         aim_controls(
             transform.rotation,
+            aircraft.angular_velocity,
+            aircraft.angular_acceleration,
             mouse_aim.target,
-            current_bank(transform.rotation),
         )
     } else {
         (0.0, 0.0, 0.0)
@@ -529,37 +530,54 @@ fn prop_torque(coefficient: f32, throttle: f32, wep: bool, wep_multiplier: f32, 
     coefficient * throttle * wep_factor * (1.0 - (ias / 150.0).clamp(0.0, 1.0))
 }
 
-/// Current bank angle in radians; positive means rolled right (right wing down).
-fn current_bank(rotation: Quat) -> f32 {
-    let right = rotation * Vec3::X;
-    let up = rotation * Vec3::Y;
-    (-right.dot(Vec3::Y)).atan2(up.dot(Vec3::Y))
-}
+/// The mouse-aim instructor, following Gaijin's patent **US8770979B2** —
+/// "System and method for simulated aircraft control through desired direction
+/// of flight" (the algorithm War Thunder's instructor uses).
+///
+/// Instead of aiming at the *current* error, the desired direction of flight is
+/// transformed into the aircraft's frame at a **predicted** future orientation:
+/// the current angular speed and acceleration are integrated forward `STEPS`
+/// times, and the local direction's components at the end become the control
+/// values:
+///
+/// * `aileron ∝ lateral`  — bank so the target ends up above or below,
+/// * `elevator ∝ vertical` — pitch so the vertical component reaches zero,
+/// * `rudder ∝ lateral`    — yaw so the lateral component reaches zero.
+///
+/// Looking ahead is what gives the instructor its smooth settle: it starts
+/// easing the controls off *before* the nose reaches the target. Returns
+/// `(pitch, roll, yaw)`.
+fn aim_controls(
+    rotation: Quat,
+    angular_velocity: Vec3,
+    angular_acceleration: Vec3,
+    desired_dir: Vec3,
+) -> (f32, f32, f32) {
+    /// How many simulation steps to look ahead.
+    const STEPS: usize = 12;
+    /// Time each predicted step advances, seconds.
+    const STEP_TIME: f32 = 0.04;
+    const AILERON_COEFFICIENT: f32 = 3.0;
+    const ELEVATOR_COEFFICIENT: f32 = 4.0;
+    const RUDDER_COEFFICIENT: f32 = 1.2;
 
-/// Instructor that points the nose at `desired_dir` (world space): it banks
-/// toward the target and pulls, then levels the wings once the nose is on
-/// target. The rudder both helps point the nose (fine aiming) and keeps the
-/// turn coordinated — it is applied with the bank, the way a pilot moves the
-/// rudder alongside the ailerons. Returns `(pitch, roll, yaw)` control inputs.
-fn aim_controls(rotation: Quat, desired_dir: Vec3, bank: f32) -> (f32, f32, f32) {
-    // Where the target is, expressed in the aircraft's body frame.
-    let local = rotation.inverse() * desired_dir.normalize_or_zero();
-    // Angle of the target above/below the nose and left/right of it.
-    let elevation = local.y.atan2(-local.z);
-    let azimuth = local.x.atan2(-local.z);
-
-    // Bank angle that would turn the nose toward the target. Because it goes to
-    // zero as the target comes onto the nose, the wings level out on target with
-    // no steady-state aim error.
-    let desired_bank = (azimuth * 2.5).clamp(-1.4, 1.4);
-    let roll = ((desired_bank - bank) * 3.0).clamp(-1.0, 1.0);
-
-    let pitch = (elevation * 2.5).clamp(-1.0, 1.0);
-
-    // Rudder: point the nose at the aim, and yaw the nose around a banked turn so
-    // the turn stays coordinated (the rudder follows the bank).
-    let yaw = (azimuth * 0.5 + bank * 0.4).clamp(-1.0, 1.0);
-    (pitch, roll, yaw)
+    let desired = desired_dir.normalize_or_zero();
+    let mut angular_speed = angular_velocity;
+    let mut predicted = rotation;
+    let (mut aileron, mut elevator, mut rudder) = (0.0, 0.0, 0.0);
+    for _ in 0..STEPS {
+        let local = predicted.inverse() * desired;
+        aileron = local.x * AILERON_COEFFICIENT;
+        elevator = local.y * ELEVATOR_COEFFICIENT;
+        rudder = local.x * RUDDER_COEFFICIENT;
+        angular_speed += angular_acceleration;
+        predicted = (predicted * Quat::from_scaled_axis(angular_speed * STEP_TIME)).normalize();
+    }
+    (
+        elevator.clamp(-1.0, 1.0),
+        aileron.clamp(-1.0, 1.0),
+        rudder.clamp(-1.0, 1.0),
+    )
 }
 
 /// Reset the aircraft's systems (controls, WEP, pilot, ammo) and repair it.
@@ -797,7 +815,14 @@ fn flight_dynamics(
 
     let responsiveness = spec.responsiveness * (0.35 + 0.65 * tail_health);
     let blend = (responsiveness * dt).clamp(0.0, 1.0);
+    let previous_angular_velocity = aircraft.angular_velocity;
     aircraft.angular_velocity = aircraft.angular_velocity.lerp(target_rates, blend);
+    // Track the rate of change for the instructor's predictive controller.
+    aircraft.angular_acceleration = if dt > 1e-4 {
+        (aircraft.angular_velocity - previous_angular_velocity) / dt
+    } else {
+        Vec3::ZERO
+    };
 
     let delta_rotation = Quat::from_scaled_axis(aircraft.angular_velocity * dt);
     transform.rotation = (transform.rotation * delta_rotation).normalize();
@@ -952,7 +977,7 @@ mod tests {
 
     #[test]
     fn aim_controls_command_nothing_when_on_target() {
-        let (pitch, roll, yaw) = aim_controls(Quat::IDENTITY, Vec3::NEG_Z, 0.0);
+        let (pitch, roll, yaw) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, Vec3::NEG_Z);
         assert!(pitch.abs() < 1e-3, "pitch {pitch}");
         assert!(roll.abs() < 1e-3, "roll {roll}");
         assert!(yaw.abs() < 1e-3, "yaw {yaw}");
@@ -962,7 +987,7 @@ mod tests {
     fn aim_controls_bank_toward_a_target_to_the_right() {
         // A direction 30 degrees to the right of the nose.
         let target = Quat::from_rotation_y(-0.5) * Vec3::NEG_Z;
-        let (pitch, roll, yaw) = aim_controls(Quat::IDENTITY, target, 0.0);
+        let (pitch, roll, yaw) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, target);
         assert!(
             roll > 0.0,
             "target to the right should roll right, got {roll}"
@@ -970,44 +995,32 @@ mod tests {
         assert!(yaw > 0.0, "target to the right should yaw right, got {yaw}");
         assert!(
             pitch.abs() < 0.2,
-            "level target should not pitch, got {pitch}"
+            "a level target should not pitch, got {pitch}"
         );
     }
 
+    /// The patent's controller looks ahead: when the aircraft is already
+    /// rotating toward the target, it eases the controls off early.
     #[test]
-    fn aim_controls_level_the_wings_when_banked_and_on_target() {
-        let rotation = Quat::from_rotation_z(-0.6); // banked right
-        let forward = rotation * Vec3::NEG_Z; // rolling does not change forward
-        let (_, roll, _) = aim_controls(rotation, forward, current_bank(rotation));
+    fn aim_controls_predict_the_rotation() {
+        let target = Quat::from_rotation_y(-0.5) * Vec3::NEG_Z;
+        let (_, still, _) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, target);
+        // Already rolling toward the target (a positive roll rate about +Z banks
+        // right).
+        let (_, rolling, _) =
+            aim_controls(Quat::IDENTITY, Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, target);
         assert!(
-            roll < 0.0,
-            "on-target but banked right should roll left to level, got {roll}"
+            rolling < still,
+            "the prediction should ease the aileron off: {rolling} vs {still}"
         );
     }
 
-    #[test]
-    fn current_bank_is_positive_for_a_right_bank() {
-        assert!(current_bank(Quat::from_rotation_z(-0.6)) > 0.0);
-        assert!(current_bank(Quat::from_rotation_z(0.6)) < 0.0);
-    }
-
-    /// The instructor uses the rudder: it points the nose at the aim, and it
-    /// coordinates a banked turn (the rudder follows the bank).
+    /// The instructor uses the rudder to yaw the nose onto the aim.
     #[test]
     fn aim_controls_use_the_rudder() {
-        // Aiming to the right yaws the nose right with real authority.
         let target = Quat::from_rotation_y(-0.5) * Vec3::NEG_Z;
-        let (_, _, yaw) = aim_controls(Quat::IDENTITY, target, 0.0);
+        let (_, _, yaw) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, target);
         assert!(yaw >= 0.2, "aiming right should use the rudder, got {yaw}");
-
-        // On target but banked right: the rudder coordinates the turn.
-        let rotation = Quat::from_rotation_z(-0.6);
-        let forward = rotation * Vec3::NEG_Z;
-        let (_, _, yaw) = aim_controls(rotation, forward, current_bank(rotation));
-        assert!(
-            yaw > 0.0,
-            "a right bank should apply right rudder, got {yaw}"
-        );
     }
 
     #[test]

@@ -298,15 +298,21 @@ In mouse-aim it does all of the following, and so do we:
 - **Compensates for the propeller's reaction torque** (and the airframe's
   aerodynamic asymmetry) with a small counter-roll.
 - **Slows the g buildup** as it approaches the airframe's structural limit.
-- Points the nose where the cursor is: it **banks into the turn and pulls**, then
-  levels the wings as the target comes onto the nose. Pressing a **manual** key
-  on an axis **overrides** the instructor on that axis (pitch / roll / yaw), but
-  the instructor still keeps the aircraft inside its limits. While the reticle is
-  right on the crosshair (within a degree) and you steer manually, it **rides
-  along with the aircraft** (WT behaviour), so releasing the keys holds the new
-  heading instead of snapping back to the old aim.
-- **Uses the rudder**: it yaws the nose onto the aim and keeps a banked turn
-  coordinated, applying the rudder alongside the ailerons (as in WT).
+- Points the nose where the cursor is by following **Gaijin's patent**
+  ([US8770979B2](https://patents.google.com/patent/US20130252208A1/en) — "System
+  and method for simulated aircraft control through desired direction of
+  flight"): the desired direction is transformed into the aircraft's frame at a
+  **predicted future orientation** — the current angular speed and acceleration
+  are integrated forward a few steps — and that local direction's components
+  drive the controls: **aileron ∝ lateral**, **elevator ∝ vertical**, **rudder ∝
+  lateral**. Looking ahead is what makes the instructor ease the controls off
+  *before* the nose arrives, so it settles smoothly instead of overshooting.
+  Pressing a **manual** key on an axis **overrides** the instructor on that axis
+  (pitch / roll / yaw), but the instructor still keeps the aircraft inside its
+  limits. While the reticle is right on the crosshair (within a degree) and you
+  steer manually, it **rides along with the aircraft** (WT behaviour), so
+  releasing the keys holds the new heading instead of snapping back to the old
+  aim.
 
 The mouse moves a **world-space aim direction**, not a screen position, so the
 on-screen cursor **drifts back toward the gun crosshair** as the nose catches up
