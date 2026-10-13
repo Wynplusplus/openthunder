@@ -23,7 +23,8 @@ use bevy::prelude::*;
 
 use openthunder::keybinds::{
     FLAPS_DOWN, FLAPS_UP, GEAR, Keybinds, PITCH_DOWN, PITCH_DOWN_ALT, PITCH_UP, PITCH_UP_ALT,
-    RESET, ROLL_LEFT, ROLL_RIGHT, THROTTLE_DOWN, THROTTLE_UP, WEP, YAW_LEFT, YAW_RIGHT,
+    RESET, ROLL_LEFT, ROLL_RIGHT, THROTTLE_DOWN, THROTTLE_UP, TOGGLE_SNAP, WEP, YAW_LEFT,
+    YAW_RIGHT,
 };
 
 use crate::aircraft::{
@@ -194,7 +195,7 @@ impl Bindings {
 /// direction, and the instructor points the nose at it. Because the direction is
 /// anchored in the world, the on-screen cursor drifts back to the centre as the
 /// aircraft turns toward it, exactly like War Thunder.
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub struct MouseAim {
     pub engaged: bool,
     pub target: Vec3,
@@ -202,6 +203,22 @@ pub struct MouseAim {
     /// [`AIM_FOLLOW_ANGLE`]): set when the aim is on the crosshair and a manual
     /// key is held, cleared when the keys are released.
     pub follow: bool,
+    /// Aim snap assist (on by default, toggled with the `toggle_snap` key):
+    /// boost the instructor's gains as the crosshair nears the screen edge, so
+    /// the nose snaps back onto the target quickly.
+    pub snap: bool,
+}
+
+impl Default for MouseAim {
+    fn default() -> Self {
+        Self {
+            engaged: false,
+            target: Vec3::ZERO,
+            follow: false,
+            // Enabled by default.
+            snap: true,
+        }
+    }
 }
 
 /// System set for the flight simulation. Other systems (such as the camera) can
@@ -314,6 +331,15 @@ fn read_player_input(
 
     let dt = time.delta_secs();
     let spec = aircraft.spec.clone();
+
+    // Toggle the aim snap assist (on by default).
+    if bindings.just_pressed(&keys, &mouse, TOGGLE_SNAP) {
+        mouse_aim.snap = !mouse_aim.snap;
+        info!(
+            "Aim snap assist {}",
+            if mouse_aim.snap { "on" } else { "off" }
+        );
+    }
 
     // Don't act on the mouse until the player actually moves it, so the aircraft
     // doesn't lurch at launch. The mouse moves a world-space aim direction and
@@ -433,6 +459,7 @@ fn read_player_input(
             aircraft.angular_velocity,
             aircraft.angular_acceleration,
             mouse_aim.target,
+            mouse_aim.snap,
         )
     } else {
         (0.0, 0.0, 0.0)
@@ -556,6 +583,7 @@ fn aim_controls(
     angular_velocity: Vec3,
     angular_acceleration: Vec3,
     desired_dir: Vec3,
+    snap: bool,
 ) -> (f32, f32, f32) {
     /// Prediction steps and the time each advances, seconds.
     const STEPS: usize = 5;
@@ -594,14 +622,30 @@ fn aim_controls(
     const RUDDER_GAIN: f32 = 0.8;
     /// Bank -> rudder (keeping the turn coordinated).
     const COORDINATION_GAIN: f32 = 0.6;
+    /// Aim snap assist: as the crosshair nears the screen edge the gains are
+    /// multiplied by up to this, so the nose snaps back onto the target.
+    const SNAP_BOOST: f32 = 2.5;
+    /// The aim error (radians) at which the snap boost is fully applied —
+    /// roughly the screen edge.
+    const SNAP_EDGE: f32 = 0.5;
+
+    // The crosshair is the nose; with the camera centred on the desired
+    // direction, a large nose-to-aim angle means the crosshair is near the edge.
+    let boost = if snap {
+        let offset = (rotation * Vec3::NEG_Z).angle_between(desired);
+        let t = (offset / SNAP_EDGE).clamp(0.0, 1.0);
+        1.0 + (SNAP_BOOST - 1.0) * t
+    } else {
+        1.0
+    };
 
     // Bank toward the target; because it goes to zero as the target comes onto
     // the nose the wings level out on target with no steady-state aim error.
-    let desired_bank = (azimuth * BANK_GAIN).clamp(-1.5, 1.5);
-    let roll = ((desired_bank - bank) * ROLL_GAIN).clamp(-1.0, 1.0);
-    let pitch = (elevation * PITCH_GAIN).clamp(-1.0, 1.0);
+    let desired_bank = (azimuth * BANK_GAIN * boost).clamp(-1.5, 1.5);
+    let roll = ((desired_bank - bank) * ROLL_GAIN * boost).clamp(-1.0, 1.0);
+    let pitch = (elevation * PITCH_GAIN * boost).clamp(-1.0, 1.0);
     // The rudder helps point the nose and keeps the banked turn coordinated.
-    let yaw = (azimuth * RUDDER_GAIN + bank * COORDINATION_GAIN).clamp(-1.0, 1.0);
+    let yaw = (azimuth * RUDDER_GAIN * boost + bank * COORDINATION_GAIN).clamp(-1.0, 1.0);
     (pitch, roll, yaw)
 }
 
@@ -1012,7 +1056,8 @@ mod tests {
 
     #[test]
     fn aim_controls_command_nothing_when_on_target() {
-        let (pitch, roll, yaw) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, Vec3::NEG_Z);
+        let (pitch, roll, yaw) =
+            aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, Vec3::NEG_Z, false);
         assert!(pitch.abs() < 1e-3, "pitch {pitch}");
         assert!(roll.abs() < 1e-3, "roll {roll}");
         assert!(yaw.abs() < 1e-3, "yaw {yaw}");
@@ -1022,7 +1067,8 @@ mod tests {
     fn aim_controls_bank_toward_a_target_to_the_right() {
         // A direction 30 degrees to the right of the nose.
         let target = Quat::from_rotation_y(-0.5) * Vec3::NEG_Z;
-        let (pitch, roll, yaw) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, target);
+        let (pitch, roll, yaw) =
+            aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, target, false);
         assert!(
             roll > 0.0,
             "target to the right should roll right, got {roll}"
@@ -1039,7 +1085,7 @@ mod tests {
     #[test]
     fn aim_controls_predict_the_rotation() {
         let target = Quat::from_rotation_y(-0.05) * Vec3::NEG_Z;
-        let (_, still, _) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, target);
+        let (_, still, _) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, target, false);
         // Already rolling toward the target (a negative roll rate about +Z banks
         // right, which is the way the target is).
         let (_, rolling, _) = aim_controls(
@@ -1047,6 +1093,7 @@ mod tests {
             Vec3::new(0.0, 0.0, -6.0),
             Vec3::ZERO,
             target,
+            false,
         );
         assert!(
             rolling < still,
@@ -1058,7 +1105,7 @@ mod tests {
     fn aim_controls_level_the_wings_when_banked_and_on_target() {
         let rotation = Quat::from_rotation_z(-0.6); // banked right
         let forward = rotation * Vec3::NEG_Z; // rolling does not change forward
-        let (_, roll, _) = aim_controls(rotation, Vec3::ZERO, Vec3::ZERO, forward);
+        let (_, roll, _) = aim_controls(rotation, Vec3::ZERO, Vec3::ZERO, forward, false);
         assert!(
             roll < 0.0,
             "on-target but banked right should roll left to level, got {roll}"
@@ -1075,8 +1122,26 @@ mod tests {
     #[test]
     fn aim_controls_use_the_rudder() {
         let target = Quat::from_rotation_y(-0.5) * Vec3::NEG_Z;
-        let (_, _, yaw) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, target);
+        let (_, _, yaw) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, target, false);
         assert!(yaw >= 0.2, "aiming right should use the rudder, got {yaw}");
+    }
+
+    /// The snap assist (on by default) boosts the gains as the crosshair nears
+    /// the screen edge, so the nose snaps back onto the target.
+    #[test]
+    fn snap_assist_boosts_the_gains_near_the_edge() {
+        // A small offset, where the un-boosted aileron is not yet saturated.
+        let target = Quat::from_rotation_y(-0.02) * Vec3::NEG_Z;
+        let (_, off, _) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, target, false);
+        let (_, on, _) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, target, true);
+        assert!(
+            on > off,
+            "the snap assist should boost the aileron near the edge: {on} vs {off}"
+        );
+
+        // On target there is nothing to boost.
+        let (_, roll, _) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, Vec3::NEG_Z, true);
+        assert!(roll.abs() < 1e-3, "on target the snap assist does nothing");
     }
 
     #[test]

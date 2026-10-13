@@ -324,6 +324,10 @@ In mouse-aim it does all of the following, and so do we:
   steer manually, it **rides along with the aircraft** (WT behaviour), so
   releasing the keys holds the new heading instead of snapping back to the old
   aim.
+- **Aim snap assist** (on by default, toggle with `H`): as the crosshair nears
+  the **screen edge** the instructor's gains are boosted (up to 2.5×), so the
+  nose snaps back onto the target quickly instead of drifting. The HUD shows the
+  current state.
 
 The mouse moves a **world-space aim direction**, not a screen position, so the
 on-screen cursor **drifts back toward the gun crosshair** as the nose catches up

@@ -135,6 +135,11 @@ pub const ACTIONS: &[ActionInfo] = &[
         label: "Zoom",
         default_key: "MouseRight",
     },
+    ActionInfo {
+        name: "toggle_snap",
+        label: "Aim snap assist",
+        default_key: "H",
+    },
 ];
 
 // Stable indices into [`ACTIONS`] / [`Keybinds::keys`], used by the game.
@@ -160,6 +165,7 @@ pub const FREE_LOOK: usize = 18;
 pub const FIRE: usize = 19;
 pub const GEAR: usize = 20;
 pub const ZOOM: usize = 21;
+pub const TOGGLE_SNAP: usize = 22;
 
 /// Canonical names of every key that can be bound.
 pub const SUPPORTED_KEYS: &[&str] = &[

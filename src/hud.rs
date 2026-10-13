@@ -5,13 +5,13 @@ use bevy::prelude::*;
 use openthunder::keybinds::{
     DAMAGE_ENGINE, DAMAGE_LEFT_WING, DAMAGE_TAIL, FIRE, FLAPS_DOWN, FLAPS_UP, FREE_LOOK, GEAR,
     PITCH_DOWN, PITCH_DOWN_ALT, PITCH_UP, PITCH_UP_ALT, REPAIR, RESET, ROLL_LEFT, ROLL_RIGHT,
-    THROTTLE_DOWN, THROTTLE_UP, WEP, YAW_LEFT, YAW_RIGHT, ZOOM, key_display,
+    THROTTLE_DOWN, THROTTLE_UP, TOGGLE_SNAP, WEP, YAW_LEFT, YAW_RIGHT, ZOOM, key_display,
 };
 
 use crate::aircraft::{Aircraft, PlayerControlled};
 use crate::combat::CombatFeedback;
 use crate::damage::{AircraftPart, DamageModel};
-use crate::flight::Bindings;
+use crate::flight::{Bindings, MouseAim};
 use crate::net::NetClient;
 use crate::pilot::CrewSkills;
 
@@ -117,6 +117,7 @@ fn update_hud(
     feedback: Res<CombatFeedback>,
     match_state: Res<crate::match_client::MatchClient>,
     target_score: Res<crate::targets::TargetScore>,
+    mouse_aim: Res<MouseAim>,
     aircraft: Query<(&Aircraft, &Transform, &DamageModel), With<PlayerControlled>>,
     mut hud: Query<
         &mut Text,
@@ -269,7 +270,7 @@ fn update_hud(
          Ammo {ammo}   {guns}{hit_marker}\n\
          {targets}\n\
          \n\
-         Mouse: aim   {fire_key}: fire   {pitch_up}/{pitch_down}/{pitch_up_alt}/{pitch_down_alt}: pitch   {roll_left}/{roll_right}: roll   {yaw_left}/{yaw_right}: rudder\n\
+         Mouse: aim ({snap_key}: snap assist {snap})   {fire_key}: fire   {pitch_up}/{pitch_down}/{pitch_up_alt}/{pitch_down_alt}: pitch   {roll_left}/{roll_right}: roll   {yaw_left}/{yaw_right}: rudder\n\
          {throttle_up}/{throttle_down}: throttle   {wep_key}: WEP   {flaps_down}/{flaps_up}: flaps   {gear_key}: gear   {reset}: respawn\n\
          {dmg_wing}/{dmg_engine}/{dmg_tail}: damage   {repair}: repair   {free_look}: free look   {zoom_key}: zoom   Esc: menu",
         name = aircraft.spec.name,
@@ -279,6 +280,8 @@ fn update_hud(
         hit_marker = hit_marker,
         targets = targets,
         fire_key = key_display(bindings.name(FIRE)),
+        snap_key = key_display(bindings.name(TOGGLE_SNAP)),
+        snap = if mouse_aim.snap { "ON" } else { "off" },
         speed = speed_kmh,
         ias = ias_kmh,
         alt = altitude,
