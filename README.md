@@ -298,15 +298,18 @@ In mouse-aim it does all of the following, and so do we:
 - **Compensates for the propeller's reaction torque** (and the airframe's
   aerodynamic asymmetry) with a small counter-roll.
 - **Slows the g buildup** as it approaches the airframe's structural limit.
-- Points the nose where the cursor is by following **Gaijin's patent**
+- Points the nose where the cursor is, following the **predictive** idea in
+  Gaijin's patent
   ([US8770979B2](https://patents.google.com/patent/US20130252208A1/en) — "System
   and method for simulated aircraft control through desired direction of
-  flight"): the desired direction is transformed into the aircraft's frame at a
-  **predicted future orientation** — the current angular speed and acceleration
-  are integrated forward a few steps — and that local direction's components
-  drive the controls: **aileron ∝ lateral**, **elevator ∝ vertical**, **rudder ∝
-  lateral**. Looking ahead is what makes the instructor ease the controls off
-  *before* the nose arrives, so it settles smoothly instead of overshooting.
+  flight"): the aircraft's own rotation (angular speed and acceleration) is
+  integrated a **bounded** few steps ahead, and the aim error is measured at that
+  **predicted** orientation, so the instructor eases the controls off *before*
+  the nose arrives instead of overshooting. The turn itself is flown the usual
+  way — **bank into the turn, pull toward the target, level out on it, rudder to
+  coordinate**. (The patent's raw component law, `aileron ∝ lateral` /
+  `elevator ∝ vertical` with an unbounded prediction, banks without ever pulling
+  — it never turns — so the prediction is clamped and the turn structure kept.)
   Pressing a **manual** key on an axis **overrides** the instructor on that axis
   (pitch / roll / yaw), but the instructor still keeps the aircraft inside its
   limits. While the reticle is right on the crosshair (within a degree) and you
