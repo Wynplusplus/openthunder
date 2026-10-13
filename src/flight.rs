@@ -581,13 +581,27 @@ fn aim_controls(
     let azimuth = local.x.atan2(-local.z);
     let bank = current_bank(rotation);
 
+    // Instructor gains. Bigger gains = stronger automatic inputs: the same aim
+    // error commands more control deflection (saturating sooner), so the
+    // aircraft turns harder and answers the cursor faster.
+    /// Aim azimuth -> desired bank angle.
+    const BANK_GAIN: f32 = 4.0;
+    /// Bank error -> aileron.
+    const ROLL_GAIN: f32 = 5.0;
+    /// Aim elevation -> elevator.
+    const PITCH_GAIN: f32 = 4.0;
+    /// Aim azimuth -> rudder (pointing the nose).
+    const RUDDER_GAIN: f32 = 0.8;
+    /// Bank -> rudder (keeping the turn coordinated).
+    const COORDINATION_GAIN: f32 = 0.6;
+
     // Bank toward the target; because it goes to zero as the target comes onto
     // the nose the wings level out on target with no steady-state aim error.
-    let desired_bank = (azimuth * 2.5).clamp(-1.4, 1.4);
-    let roll = ((desired_bank - bank) * 3.0).clamp(-1.0, 1.0);
-    let pitch = (elevation * 2.5).clamp(-1.0, 1.0);
+    let desired_bank = (azimuth * BANK_GAIN).clamp(-1.5, 1.5);
+    let roll = ((desired_bank - bank) * ROLL_GAIN).clamp(-1.0, 1.0);
+    let pitch = (elevation * PITCH_GAIN).clamp(-1.0, 1.0);
     // The rudder helps point the nose and keeps the banked turn coordinated.
-    let yaw = (azimuth * 0.5 + bank * 0.4).clamp(-1.0, 1.0);
+    let yaw = (azimuth * RUDDER_GAIN + bank * COORDINATION_GAIN).clamp(-1.0, 1.0);
     (pitch, roll, yaw)
 }
 
