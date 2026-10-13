@@ -325,9 +325,11 @@ In mouse-aim it does all of the following, and so do we:
   releasing the keys holds the new heading instead of snapping back to the old
   aim.
 - **Aim snap assist** (on by default, toggle with `H`): as the crosshair nears
-  the **screen edge** the instructor's gains are boosted (up to 2.5×), so the
-  nose snaps back onto the target quickly instead of drifting. The HUD shows the
-  current state.
+  the **screen edge** the instructor commands **full deflection** (100% force) on
+  each axis instead of its proportional command, so the nose snaps back onto the
+  target. It ramps in from ~0.15 rad off-centre to full at ~0.35 rad. (Scaling
+  the gains instead does nothing — they already saturate the controls.) The HUD
+  shows the current state.
 
 The mouse moves a **world-space aim direction**, not a screen position, so the
 on-screen cursor **drifts back toward the gun crosshair** as the nose catches up

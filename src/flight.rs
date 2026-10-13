@@ -622,30 +622,40 @@ fn aim_controls(
     const RUDDER_GAIN: f32 = 0.8;
     /// Bank -> rudder (keeping the turn coordinated).
     const COORDINATION_GAIN: f32 = 0.6;
-    /// Aim snap assist: as the crosshair nears the screen edge the gains are
-    /// multiplied by up to this, so the nose snaps back onto the target.
-    const SNAP_BOOST: f32 = 2.5;
-    /// The aim error (radians) at which the snap boost is fully applied —
-    /// roughly the screen edge.
-    const SNAP_EDGE: f32 = 0.5;
-
-    // The crosshair is the nose; with the camera centred on the desired
-    // direction, a large nose-to-aim angle means the crosshair is near the edge.
-    let boost = if snap {
-        let offset = (rotation * Vec3::NEG_Z).angle_between(desired);
-        let t = (offset / SNAP_EDGE).clamp(0.0, 1.0);
-        1.0 + (SNAP_BOOST - 1.0) * t
-    } else {
-        1.0
-    };
 
     // Bank toward the target; because it goes to zero as the target comes onto
     // the nose the wings level out on target with no steady-state aim error.
-    let desired_bank = (azimuth * BANK_GAIN * boost).clamp(-1.5, 1.5);
-    let roll = ((desired_bank - bank) * ROLL_GAIN * boost).clamp(-1.0, 1.0);
-    let pitch = (elevation * PITCH_GAIN * boost).clamp(-1.0, 1.0);
+    let desired_bank = (azimuth * BANK_GAIN).clamp(-1.5, 1.5);
+    let mut roll = ((desired_bank - bank) * ROLL_GAIN).clamp(-1.0, 1.0);
+    let mut pitch = (elevation * PITCH_GAIN).clamp(-1.0, 1.0);
     // The rudder helps point the nose and keeps the banked turn coordinated.
-    let yaw = (azimuth * RUDDER_GAIN * boost + bank * COORDINATION_GAIN).clamp(-1.0, 1.0);
+    let mut yaw = (azimuth * RUDDER_GAIN + bank * COORDINATION_GAIN).clamp(-1.0, 1.0);
+
+    // --- Aim snap assist ---
+    // Near the screen edge, ramp the command up to **full deflection** (100%
+    // force) rather than scaling the gains: the gains already saturate the
+    // controls, so a multiplier changes nothing. The crosshair is the nose, so
+    // with the camera centred on the desired direction the nose-to-aim angle is
+    // exactly how near the edge the crosshair is.
+    if snap {
+        /// Below this aim error (radians) the snap does nothing.
+        const SNAP_START: f32 = 0.15;
+        /// At/after this aim error the snap commands full deflection.
+        const SNAP_FULL: f32 = 0.35;
+
+        let offset = (rotation * Vec3::NEG_Z).angle_between(desired);
+        let t = ((offset - SNAP_START) / (SNAP_FULL - SNAP_START)).clamp(0.0, 1.0);
+        if t > 0.0 {
+            // Full deflection on each axis, in the direction that reduces the
+            // error.
+            let full_roll = if desired_bank >= bank { 1.0 } else { -1.0 };
+            let full_pitch = if elevation >= 0.0 { 1.0 } else { -1.0 };
+            let full_yaw = if azimuth >= 0.0 { 1.0 } else { -1.0 };
+            roll += (full_roll - roll) * t;
+            pitch += (full_pitch - pitch) * t;
+            yaw += (full_yaw - yaw) * t;
+        }
+    }
     (pitch, roll, yaw)
 }
 
@@ -1126,20 +1136,25 @@ mod tests {
         assert!(yaw >= 0.2, "aiming right should use the rudder, got {yaw}");
     }
 
-    /// The snap assist (on by default) boosts the gains as the crosshair nears
-    /// the screen edge, so the nose snaps back onto the target.
+    /// The snap assist (on by default) commands **full deflection** as the
+    /// crosshair nears the screen edge, so the nose snaps onto the target.
     #[test]
-    fn snap_assist_boosts_the_gains_near_the_edge() {
-        // A small offset, where the un-boosted aileron is not yet saturated.
-        let target = Quat::from_rotation_y(-0.02) * Vec3::NEG_Z;
-        let (_, off, _) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, target, false);
-        let (_, on, _) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, target, true);
+    fn snap_assist_applies_full_force_near_the_edge() {
+        // Beyond the snap threshold the aileron goes to full deflection.
+        let target = Quat::from_rotation_y(-0.5) * Vec3::NEG_Z;
+        let (_, roll, _) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, target, true);
         assert!(
-            on > off,
-            "the snap assist should boost the aileron near the edge: {on} vs {off}"
+            (roll - 1.0).abs() < 1e-3,
+            "the snap should command full aileron, got {roll}"
         );
 
-        // On target there is nothing to boost.
+        // Just off centre (inside the snap threshold) it does nothing extra.
+        let near = Quat::from_rotation_y(-0.02) * Vec3::NEG_Z;
+        let (_, off, _) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, near, false);
+        let (_, on, _) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, near, true);
+        assert!((on - off).abs() < 1e-3, "near the centre the snap is inert");
+
+        // On target there is nothing to snap.
         let (_, roll, _) = aim_controls(Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO, Vec3::NEG_Z, true);
         assert!(roll.abs() < 1e-3, "on target the snap assist does nothing");
     }
